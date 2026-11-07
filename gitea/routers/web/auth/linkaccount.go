@@ -1,0 +1,275 @@
+// Copyright 2017 The Gitea Authors. All rights reserved.
+// SPDX-License-Identifier: MIT
+
+package auth
+
+import (
+	"errors"
+	"net/http"
+	"strings"
+
+	"github.com/wekan/caddy-gitea-plugin/gitea/models/auth"
+	user_model "github.com/wekan/caddy-gitea-plugin/gitea/models/user"
+	"github.com/wekan/caddy-gitea-plugin/gitea/modules/log"
+	"github.com/wekan/caddy-gitea-plugin/gitea/modules/session"
+	"github.com/wekan/caddy-gitea-plugin/gitea/modules/setting"
+	"github.com/wekan/caddy-gitea-plugin/gitea/modules/templates"
+	"github.com/wekan/caddy-gitea-plugin/gitea/modules/util"
+	"github.com/wekan/caddy-gitea-plugin/gitea/modules/web"
+	auth_service "github.com/wekan/caddy-gitea-plugin/gitea/services/auth"
+	"github.com/wekan/caddy-gitea-plugin/gitea/services/auth/source/oauth2"
+	"github.com/wekan/caddy-gitea-plugin/gitea/services/context"
+	"github.com/wekan/caddy-gitea-plugin/gitea/services/externalaccount"
+	"github.com/wekan/caddy-gitea-plugin/gitea/services/forms"
+)
+
+var tplLinkAccount templates.TplName = "user/auth/link_account"
+
+func prepareLinkAccountPageData(ctx *context.Context) {
+	// TODO Make insecure passwords optional for local accounts also, once email-based Second-Factor Auth is available
+	ctx.Data["DisablePassword"] = !setting.Service.RequireExternalRegistrationPassword || setting.Service.AllowOnlyExternalRegistration
+
+	ctx.Data["Title"] = ctx.Tr("link_account")
+	ctx.Data["LinkAccountMode"] = true
+
+	// use this to set the right link into the signIn and signUp templates in the link_account template
+	ctx.Data["SignInLink"] = setting.AppSubURL + "/user/link_account_signin"
+	ctx.Data["SignUpLink"] = setting.AppSubURL + "/user/link_account_signup"
+	ctx.Data["ShowRegistrationButton"] = false
+	ctx.Data["DisableRegistration"] = setting.Service.DisableRegistration
+
+	// FIXME: this logic is not right: captcha is enabled, but LinkAccountPostSignIn never checks for captcha
+	prepareCommonAuthPageData(ctx, CommonAuthOptions{
+		EnableCaptcha: setting.Service.EnableCaptcha && setting.Service.RequireExternalRegistrationCaptcha,
+	})
+}
+
+// LinkAccount shows the page where the user can decide to login or create a new account
+func LinkAccount(ctx *context.Context) {
+	prepareLinkAccountPageData(ctx)
+
+	linkAccountData := oauth2GetLinkAccountData(ctx)
+
+	// If you'd like to quickly debug the "link account" page layout, just uncomment the blow line
+	// Don't worry, when the below line exists, the lint won't pass: ineffectual assignment to gothUser (ineffassign)
+	// linkAccountData = &LinkAccountData{authSource, gothUser} // intentionally use invalid data to avoid pass the registration check
+
+	if linkAccountData == nil {
+		// no account in session, so just redirect to the login page, then the user could restart the process
+		ctx.Redirect(setting.AppSubURL + "/user/login")
+		return
+	}
+
+	if missingFields, ok := linkAccountData.GothUser.RawData["__giteaAutoRegMissingFields"].([]string); ok {
+		ctx.Data["AutoRegistrationFailedPrompt"] = ctx.Tr("auth.oauth_callback_unable_auto_reg", linkAccountData.GothUser.Provider, strings.Join(missingFields, ","))
+	}
+
+	uname, err := extractUserNameFromOAuth2(&linkAccountData.GothUser)
+	if err != nil {
+		ctx.ServerError("UserSignIn", err)
+		return
+	}
+	email := linkAccountData.GothUser.Email
+	ctx.Data["user_name"] = uname
+	ctx.Data["email"] = email
+
+	if email != "" {
+		u, err := user_model.GetUserByEmail(ctx, email)
+		if err != nil && !user_model.IsErrUserNotExist(err) {
+			ctx.ServerError("UserSignIn", err)
+			return
+		}
+		if u != nil {
+			ctx.Data["user_exists"] = true
+		}
+	} else if uname != "" {
+		u, err := user_model.GetUserByName(ctx, uname)
+		if err != nil && !user_model.IsErrUserNotExist(err) {
+			ctx.ServerError("UserSignIn", err)
+			return
+		}
+		if u != nil {
+			ctx.Data["user_exists"] = true
+		}
+	}
+
+	ctx.HTML(http.StatusOK, tplLinkAccount)
+}
+
+func handleSignInError(ctx *context.Context, userName string, ptrForm any, tmpl templates.TplName, invoker string, err error) {
+	if errors.Is(err, util.ErrNotExist) {
+		ctx.RenderWithErrDeprecated(ctx.Tr("form.username_password_incorrect"), tmpl, ptrForm)
+	} else if errors.Is(err, util.ErrInvalidArgument) {
+		ctx.Data["user_exists"] = true
+		ctx.RenderWithErrDeprecated(ctx.Tr("form.username_password_incorrect"), tmpl, ptrForm)
+	} else if user_model.IsErrUserProhibitLogin(err) {
+		ctx.Data["user_exists"] = true
+		log.Info("Failed authentication attempt for %s from %s: %v", userName, ctx.RemoteAddr(), err)
+		ctx.Data["Title"] = ctx.Tr("auth.prohibit_login")
+		ctx.HTML(http.StatusOK, "user/auth/prohibit_login")
+	} else {
+		ctx.ServerError(invoker, err)
+	}
+}
+
+// LinkAccountPostSignIn handle the coupling of external account with another account using signIn
+func LinkAccountPostSignIn(ctx *context.Context) {
+	signInForm := web.GetForm[*forms.SignInForm](ctx)
+
+	ctx.Data["LinkAccountModeSignIn"] = true
+
+	prepareLinkAccountPageData(ctx)
+
+	linkAccountData := oauth2GetLinkAccountData(ctx)
+	if linkAccountData == nil {
+		ctx.ServerError("UserSignIn", errors.New("not in LinkAccount session"))
+		return
+	}
+
+	if ctx.HasError() {
+		ctx.HTML(http.StatusOK, tplLinkAccount)
+		return
+	}
+
+	u, _, err := auth_service.UserSignIn(ctx, signInForm.UserName, signInForm.Password)
+	if err != nil {
+		handleSignInError(ctx, signInForm.UserName, &signInForm, tplLinkAccount, "UserLinkAccount", err)
+		return
+	}
+
+	oauth2LinkAccount(ctx, u, linkAccountData, signInForm.Remember)
+}
+
+func oauth2LinkAccount(ctx *context.Context, u *user_model.User, linkAccountData *LinkAccountData, remember bool) {
+	oauth2SignInSync(ctx, linkAccountData.AuthSourceID, u, linkAccountData.GothUser)
+	if ctx.Written() {
+		return
+	}
+
+	// If this user is enrolled in 2FA, we can't sign the user in just yet.
+	// Instead, redirect them to the 2FA authentication page.
+	// We deliberately ignore the skip local 2fa setting here because we are linking to a previous user here
+	hasTwoFactor, err := auth.HasTwoFactorOrWebAuthn(ctx, u.ID)
+	if err != nil {
+		ctx.ServerError("UserLinkAccount", err)
+		return
+	}
+	if !hasTwoFactor {
+		if err := externalaccount.LinkAccountToUser(ctx, linkAccountData.AuthSourceID, u, linkAccountData.GothUser); err != nil {
+			ctx.ServerError("UserLinkAccount", err)
+			return
+		}
+
+		handleSignIn(ctx, u, remember)
+		return
+	}
+
+	if err := Oauth2SetLinkAccountData(ctx, *linkAccountData); err != nil {
+		ctx.ServerError("Oauth2SetLinkAccountData", err)
+		return
+	}
+
+	handleTwoFactorRequired(ctx, u, remember, map[string]any{
+		"linkAccount":           true,
+		session.KeySignInMethod: session.SignInMethodOAuth2,
+	})
+}
+
+// LinkAccountPostRegister handle the creation of a new account for an external account using signUp
+func LinkAccountPostRegister(ctx *context.Context) {
+	form := web.GetForm[*forms.RegisterForm](ctx)
+
+	ctx.Data["LinkAccountModeRegister"] = true
+
+	prepareLinkAccountPageData(ctx)
+
+	linkAccountData := oauth2GetLinkAccountData(ctx)
+	if linkAccountData == nil {
+		ctx.ServerError("UserSignUp", errors.New("not in LinkAccount session"))
+		return
+	}
+	if ctx.HasError() {
+		ctx.HTML(http.StatusOK, tplLinkAccount)
+		return
+	}
+
+	if setting.Service.DisableRegistration || setting.Service.AllowOnlyInternalRegistration {
+		ctx.HTTPError(http.StatusForbidden)
+		return
+	}
+
+	if setting.Service.EnableCaptcha && setting.Service.RequireExternalRegistrationCaptcha {
+		if !context.VerifyCaptcha(ctx, tplLinkAccount, form) {
+			return
+		}
+	}
+
+	if !form.IsEmailDomainAllowed() {
+		ctx.RenderWithErrDeprecated(ctx.Tr("auth.email_domain_blacklisted"), tplLinkAccount, &form)
+		return
+	}
+
+	if setting.Service.AllowOnlyExternalRegistration || !setting.Service.RequireExternalRegistrationPassword {
+		// In user_model.User an empty password is classed as not set, so we set form.Password to empty.
+		// Eventually the database should be changed to indicate "Second Factor"-enabled accounts
+		// (accounts that do not introduce the security vulnerabilities of a password).
+		// If a user decides to circumvent second-factor security, and purposefully create a password,
+		// they can still do so using the "Recover Account" option.
+		form.Password = ""
+	} else {
+		if (len(strings.TrimSpace(form.Password)) > 0 || len(strings.TrimSpace(form.Retype)) > 0) && form.Password != form.Retype {
+			ctx.Data["Err_Password"] = true
+			ctx.RenderWithErrDeprecated(ctx.Tr("form.password_not_match"), tplLinkAccount, &form)
+			return
+		}
+		if len(strings.TrimSpace(form.Password)) > 0 && len(form.Password) < setting.MinPasswordLength {
+			ctx.Data["Err_Password"] = true
+			ctx.RenderWithErrDeprecated(ctx.Tr("auth.password_too_short", setting.MinPasswordLength), tplLinkAccount, &form)
+			return
+		}
+	}
+
+	u := &user_model.User{
+		Name:        form.UserName,
+		Email:       form.Email,
+		Passwd:      form.Password,
+		LoginType:   auth.OAuth2,
+		LoginSource: linkAccountData.AuthSourceID,
+		LoginName:   linkAccountData.GothUser.UserID,
+	}
+
+	if !createAndHandleCreatedUser(ctx, tplLinkAccount, form, u, nil, linkAccountData) {
+		// error already handled
+		return
+	}
+
+	oauth2SignInSync(ctx, linkAccountData.AuthSourceID, u, linkAccountData.GothUser)
+	if ctx.Written() {
+		return
+	}
+
+	authSource, err := auth.GetSourceByID(ctx, linkAccountData.AuthSourceID)
+	if err != nil {
+		ctx.ServerError("GetSourceByID", err)
+		return
+	}
+	source := auth.MustSourceCfg[*oauth2.Source](authSource)
+	if err := syncGroupsToTeams(ctx, source, &linkAccountData.GothUser, u); err != nil {
+		ctx.ServerError("SyncGroupsToTeams", err)
+		return
+	}
+
+	handleSignIn(ctx, u, false)
+}
+
+func completePendingLinks(ctx *context.Context, user *user_model.User) error {
+	if ctx.Session.Get("linkAccount") == nil {
+		return nil
+	}
+
+	linkAccountData := oauth2GetLinkAccountData(ctx)
+	if linkAccountData == nil {
+		return errors.New("not in LinkAccount session")
+	}
+	return externalaccount.LinkAccountToUser(ctx, linkAccountData.AuthSourceID, user, linkAccountData.GothUser)
+}

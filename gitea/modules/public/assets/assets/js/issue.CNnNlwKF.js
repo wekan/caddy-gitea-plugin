@@ -1,0 +1,2 @@
+function e(e){return e.pull_request?e.state===`open`?e.pull_request.draft?`octicon-git-pull-request-draft`:`octicon-git-pull-request`:e.pull_request.merged?`octicon-git-merge`:`octicon-git-pull-request-closed`:e.state===`open`?`octicon-issue-opened`:`octicon-issue-closed`}function t(e){return e.pull_request?e.state===`open`?e.pull_request.draft?`tw-text-text-light`:`tw-text-green`:e.pull_request.merged?`tw-text-purple`:`tw-text-red`:e.state===`open`?`tw-text-green`:`tw-text-red`}export{e as n,t};
+//# sourceMappingURL=issue.CNnNlwKF.js.map

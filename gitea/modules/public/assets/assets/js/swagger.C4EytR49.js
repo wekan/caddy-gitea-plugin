@@ -1,0 +1,2 @@
+import{t as e}from"./swagger.CIfWZcfG.js";async function t(){let t=document.querySelector(`#swagger-ui`),n=t.getAttribute(`data-source`),r=await fetch(n);e(t,{specText:await r.text()})}t();
+//# sourceMappingURL=swagger.C4EytR49.js.map

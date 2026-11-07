@@ -1,0 +1,3 @@
+const __vite__mapDeps=(i,m=__vite__mapDeps,d=(m.f||(m.f=["../css/asciinema-player.MQbROGju.css"])))=>i.map(i=>d[i]);
+import{t as e}from"./preload-helper.CRzLMJPS.js";var t=async t=>{try{let[n]=await Promise.all([e(()=>import(`./dist.CmfYFMo8.js`),[],import.meta.url),e(()=>Promise.resolve({}),__vite__mapDeps([0]),import.meta.url)]);return n.create({data:t.contentString()},t.container,{poster:`npt:1:0:0`}),t.container.querySelector(`.ap-term`).style.overflow=`hidden`,t.container.querySelector(`.ap-player`).style.borderRadius=`0`,!0}catch(e){return console.error(e),!1}};export{t as frontendRender};
+//# sourceMappingURL=frontend-asciicast.EuMpO-wo.js.map
