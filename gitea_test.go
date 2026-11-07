@@ -2,180 +2,152 @@ package caddygitea
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
+	"github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
+	_ "github.com/caddyserver/caddy/v2/modules/standard"
 )
 
-func ini(t *testing.T, text string) string {
-	p := filepath.Join(t.TempDir(), "app.ini")
-	if err := os.WriteFile(p, []byte(text), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	return p
-}
-
-func TestDialFromINI(t *testing.T) {
-	for _, c := range []struct {
-		name, ini, dial string
-		warn, fail      bool
-	}{
-		{"loopback", "[server]\nHTTP_ADDR = 127.0.0.1\nHTTP_PORT = 3001\n", "127.0.0.1:3001", false, false},
-		{"unix socket", "[server]\nPROTOCOL = http+unix\nHTTP_ADDR = /run/gitea/gitea.sock\n", "unix//run/gitea/gitea.sock", false, false},
-		{"defaults: all addresses, warned", "[server]\nDOMAIN = x\n", "127.0.0.1:3000", true, false},
-		{"other sections do not count", "[database]\nHTTP_PORT = 9\n[server]\nHTTP_ADDR = \"127.0.0.1\"\n", "127.0.0.1:3000", false, false},
-		{"IPv6", "[server]\nHTTP_ADDR = ::1\nHTTP_PORT = 3000\n", "[::1]:3000", false, false},
-		{"negative: https cannot be proxied", "[server]\nPROTOCOL = https\n", "", false, true},
-		{"negative: a socket needs its path", "[server]\nPROTOCOL = http+unix\n", "", false, true},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			dial, warn, err := DialFromINI(ini(t, c.ini))
-			if (err != nil) != c.fail || dial != c.dial || (warn != "") != c.warn {
-				t.Fatalf("got %q, warning %q, error %v", dial, warn, err)
-			}
-		})
-	}
-	if dial, _, err := DialFromINI(filepath.Join(t.TempDir(), "missing.ini")); err != nil || dial != "127.0.0.1:3000" {
-		t.Fatalf("a missing app.ini is Gitea's defaults: %q %v", dial, err)
-	}
-}
-
-func TestCommandArgs(t *testing.T) {
-	a := App{WorkPath: "/var/lib/gitea", Config: "/etc/gitea/app.ini", Args: []string{"--verbose"}}
-	want := []string{"--work-path", "/var/lib/gitea", "--config", "/etc/gitea/app.ini", "web", "--verbose"}
-	if got := a.CommandArgs(); !reflect.DeepEqual(got, want) {
-		t.Fatalf("got %v", got)
-	}
-	for _, arg := range a.CommandArgs() {
-		if strings.HasPrefix(arg, "--port") {
-			t.Fatal("negative: --port makes Gitea write LOCAL_ROOT_URL into app.ini")
-		}
-	}
-}
-
-func TestCaddyfile(t *testing.T) {
-	const input = `{
-	gitea {
-		binary /usr/local/bin/gitea
-		work_path /var/lib/gitea
-		dial unix//run/gitea.sock
-		env GITEA_CUSTOM /etc/gitea custom
-		args --quiet
-		stop_timeout 45s
-	}
-}
-git.example.org {
-	gitea
-}`
-	adapter := caddyfile.Adapter{ServerType: httpcaddyfileServerType()}
-	out, warnings, err := adapter.Adapt([]byte(input), nil)
+func freeAddr(t *testing.T) string {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, w := range warnings {
-		if !strings.Contains(w.Message, "not formatted") {
-			t.Fatalf("warning: %v", w)
-		}
-	}
-	var cfg struct {
-		Apps map[string]json.RawMessage `json:"apps"`
-	}
-	if err := json.Unmarshal(out, &cfg); err != nil {
+	defer l.Close()
+	return l.Addr().String()
+}
+
+func TestCaddyfile(t *testing.T) {
+	adapter := caddyfile.Adapter{ServerType: httpcaddyfile.ServerType{}}
+	out, _, err := adapter.Adapt([]byte("{\n\tgitea {\n\t\twork_path /var/lib/gitea\n\t\tcustom_path /etc/gitea\n\t\tconfig /etc/gitea/app.ini\n\t\tstop_timeout 45s\n\t}\n}\ngit.example.org {\n\tgitea\n}\n"), nil)
+	if err != nil {
 		t.Fatal(err)
 	}
+	var cfg struct{ Apps map[string]json.RawMessage }
+	_ = json.Unmarshal(out, &cfg)
 	var app App
-	if err := json.Unmarshal(cfg.Apps["gitea"], &app); err != nil {
-		t.Fatal(err)
-	}
-	if app.Binary != "/usr/local/bin/gitea" || app.WorkPath != "/var/lib/gitea" || app.Dial != "unix//run/gitea.sock" ||
-		app.Env["GITEA_CUSTOM"] != "/etc/gitea custom" || !reflect.DeepEqual(app.Args, []string{"--quiet"}) ||
-		app.StopTimeout != caddy.Duration(45e9) {
+	_ = json.Unmarshal(cfg.Apps["gitea"], &app)
+	if app.WorkPath != "/var/lib/gitea" || app.CustomPath != "/etc/gitea" || app.Config != "/etc/gitea/app.ini" || app.StopTimeout != caddy.Duration(45e9) {
 		t.Fatalf("the gitea option: %+v", app)
 	}
 	if !strings.Contains(string(cfg.Apps["http"]), `"handler":"gitea"`) {
-		t.Fatalf("the site has no gitea handler: %s", cfg.Apps["http"])
+		t.Fatal("the site has no gitea handler")
 	}
-	if _, _, err := adapter.Adapt([]byte("{\n\tgitea {\n\t\tcolour red\n\t}\n}\n"), nil); err == nil {
-		t.Fatal("negative: an unknown option must be an error")
-	}
-	if _, _, err := adapter.Adapt([]byte("x.example.org {\n\tgitea extra\n}\n"), nil); err == nil {
-		t.Fatal("negative: the gitea directive takes no arguments")
+	for name, bad := range map[string]string{
+		"an unknown option":        "{\n\tgitea {\n\t\tbinary /usr/bin/gitea\n\t}\n}\n",
+		"arguments to the handler": "x.example.org {\n\tgitea extra\n}\n",
+	} {
+		if _, _, err := adapter.Adapt([]byte(bad), nil); err == nil {
+			t.Errorf("negative: %s must be refused", name)
+		}
 	}
 }
 
-// A real Caddy: the gitea app supervises a stand-in Gitea (this test binary, which
-// starts listening after a delay), and the gitea handler serves a site from it.
-func TestCaddyRunsAndProxiesGitea(t *testing.T) {
-	exe, _ := os.Executable()
-	backend, site := freeAddr(t), freeAddr(t)
+// A real Caddy runs the embedded Gitea - its migrations on a new SQLite database,
+// its templates and assets from gitea/, wekan/gitea-patches' Finnish - and serves it.
+func TestCaddyRunsGiteaInside(t *testing.T) {
+	work := t.TempDir()
+	site := freeAddr(t)
+	// Gitea maintains ~/.ssh/authorized_keys of the user it runs as by default: the
+	// test points it, and HOME, into its own directory.
+	t.Setenv("HOME", work)
+	ini := fmt.Sprintf(`APP_NAME = Weddy test
+RUN_MODE = prod
+WORK_PATH = %[1]s
+
+[database]
+DB_TYPE = sqlite3
+PATH = %[1]s/data/gitea.db
+
+[repository]
+ROOT = %[1]s/repositories
+
+[server]
+ROOT_URL = http://%[2]s/
+APP_DATA_PATH = %[1]s/data
+DISABLE_SSH = true
+START_SSH_SERVER = false
+SSH_ROOT_PATH = %[1]s/ssh
+SSH_CREATE_AUTHORIZED_KEYS_FILE = false
+OFFLINE_MODE = true
+
+[security]
+INSTALL_LOCK = true
+SECRET_KEY = weddy-test-secret-key-weddy-test-secret-key
+INTERNAL_TOKEN = weddy-test-internal-token-weddy-test-internal-token-0123456789
+
+[log]
+MODE = console
+LEVEL = warn
+`, filepath.ToSlash(work), site)
+	conf := filepath.Join(work, "custom", "conf", "app.ini")
+	if err := os.MkdirAll(filepath.Dir(conf), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(conf, []byte(ini), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	cfg := map[string]any{
 		"admin": map[string]any{"disabled": true},
 		"apps": map[string]any{
-			"gitea": map[string]any{"binary": exe, "dial": backend, "stop_timeout": "5s",
-				"env": map[string]string{"GITEA_TEST_HELPER": "serve", "GITEA_TEST_ADDR": backend, "GITEA_TEST_DELAY": "1s"}},
-			"http": map[string]any{
-				"http_port": 0, "https_port": 0,
-				"servers": map[string]any{"s": map[string]any{
-					"listen":          []string{site},
-					"automatic_https": map[string]any{"disable": true},
-					"routes":          []any{map[string]any{"handle": []any{map[string]any{"handler": "gitea"}}}},
-				}},
-			},
+			"gitea": map[string]any{"work_path": work},
+			"http": map[string]any{"servers": map[string]any{"s": map[string]any{
+				"listen": []string{site}, "automatic_https": map[string]any{"disable": true},
+				"routes": []any{map[string]any{"handle": []any{map[string]any{"handler": "gitea"}}}},
+			}}},
 		},
 	}
 	raw, _ := json.Marshal(cfg)
 	if err := caddy.Load(raw, true); err != nil {
 		t.Fatal(err)
 	}
-	stopped := false
-	defer func() {
-		if !stopped {
-			_ = caddy.Stop()
+	defer caddy.Stop()
+
+	get := func(path, lang string) (int, string) {
+		req, _ := http.NewRequest("GET", "http://"+site+path, nil)
+		if lang != "" {
+			req.Header.Set("Accept-Language", lang)
 		}
-	}()
-
-	res, err := http.Get("http://" + site + "/wekan/wekan")
-	if err != nil {
-		t.Fatal(err)
-	}
-	res.Body.Close()
-	if res.StatusCode != http.StatusServiceUnavailable || res.Header.Get("Retry-After") == "" {
-		t.Fatalf("negative: while Gitea starts the answer must be 503 with Retry-After, got %d", res.StatusCode)
-	}
-
-	var body string
-	deadline := time.Now().Add(20 * time.Second)
-	for time.Now().Before(deadline) {
-		res, err := http.Get("http://" + site + "/wekan/wekan")
-		if err == nil {
-			b, _ := io.ReadAll(res.Body)
-			res.Body.Close()
-			if res.StatusCode == http.StatusOK {
-				body = string(b)
-				break
-			}
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return 0, err.Error()
 		}
-		time.Sleep(100 * time.Millisecond)
+		defer res.Body.Close()
+		b, _ := io.ReadAll(res.Body)
+		return res.StatusCode, string(b)
 	}
-	if body != "from gitea /wekan/wekan" {
-		t.Fatalf("proxied answer %q", body)
+	code, body := get("/user/login", "fi-FI")
+	if code != http.StatusServiceUnavailable && code != http.StatusOK {
+		t.Fatalf("first answer %d: %.300s", code, body)
 	}
-
-	if err := caddy.Stop(); err != nil {
-		t.Fatal(err)
+	deadline := time.Now().Add(2 * time.Minute)
+	for code != http.StatusOK && time.Now().Before(deadline) {
+		time.Sleep(200 * time.Millisecond)
+		code, body = get("/user/login", "fi-FI")
 	}
-	stopped = true
-	if c, err := net.DialTimeout("tcp", backend, time.Second); err == nil {
-		c.Close()
-		t.Fatal("negative: Gitea still runs after Caddy stopped")
+	if code != http.StatusOK {
+		t.Fatalf("Gitea did not become ready: %d %.300s", code, body)
+	}
+	if !strings.Contains(body, "Weddy test") || !strings.Contains(body, "Kirjaudu sisään") {
+		t.Fatalf("the login page is not Gitea's in Finnish (Kirjaudu sisään): %.500s", body)
+	}
+	if code, body := get("/assets/img/logo.svg", ""); code != http.StatusOK || !strings.Contains(body, "<svg") {
+		t.Fatalf("negative: embedded public assets are not served: %d %.200s", code, body)
+	}
+	if code, _ := get("/no/such/user/or/repo", ""); code != http.StatusNotFound {
+		t.Fatalf("Gitea's own 404 expected, got %d", code)
+	}
+	if _, err := os.Stat(filepath.Join(work, ".ssh")); err == nil {
+		t.Fatal("negative: Gitea wrote ~/.ssh although the test's app.ini turns that off")
 	}
 }

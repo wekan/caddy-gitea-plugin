@@ -1,0 +1,100 @@
+From 6df29db9183167835b0112ce719c7616ef01342b Mon Sep 17 00:00:00 2001
+From: Lauri Ojansivu <x@xet7.org>
+Date: Sat, 7 Nov 2026 20:51:34 +0200
+Subject: [PATCH] Run Gitea embedded in a host program.
+
+A program that runs Gitea inside itself - wekan/caddy-gitea-plugin runs it inside
+Caddy - owns the process and its HTTP server, so:
+
+- graceful.Embedded, set before InitManager, makes the manager handle no
+  signals (a SIGHUP would make Gitea restart by re-executing the host's
+  binary), send no systemd notifications, run no Windows service and wait
+  for no HTTP servers of its own; the host stops Gitea with
+  DoGracefulShutdown.
+- install.OnInstalled, when set, is called after the install page is done
+  instead of shutting down the http.Server that served it - the host's.
+
+Nothing changes when neither is set.
+---
+ modules/graceful/manager.go         |  7 +++++++
+ modules/graceful/manager_unix.go    |  4 ++++
+ modules/graceful/manager_windows.go |  4 ++++
+ routers/install/install.go          | 13 +++++++++++++
+ 4 files changed, 28 insertions(+)
+
+diff --git a/modules/graceful/manager.go b/modules/graceful/manager.go
+index e2595a4592..a8831c941b 100644
+--- a/modules/graceful/manager.go
++++ b/modules/graceful/manager.go
+@@ -51,6 +51,13 @@ func GetManager() *Manager {
+ }
+ 
+ // InitManager creates the graceful manager in the provided context
++// Embedded is set by a program that runs Gitea inside itself - such as a Caddy
++// plugin - before InitManager. The host owns the process: Gitea then handles no
++// signals (a SIGHUP would make it restart, re-executing the host's binary), sends no
++// systemd notifications, runs no Windows service, and does not wait for HTTP servers
++// of its own, which it does not create. The host stops it with DoGracefulShutdown.
++var Embedded bool
++
+ func InitManager(ctx context.Context) {
+ 	if manager != nil {
+ 		log.Error("graceful.InitManager called more than once")
+diff --git a/modules/graceful/manager_unix.go b/modules/graceful/manager_unix.go
+index fb540a79c9..0165009ed2 100644
+--- a/modules/graceful/manager_unix.go
++++ b/modules/graceful/manager_unix.go
+@@ -48,6 +48,10 @@ func (g *Manager) start() {
+ 	pprof.SetGoroutineLabels(g.managerCtx)
+ 	defer pprof.SetGoroutineLabels(g.ctx)
+ 
++	if Embedded {
++		return // the host program handles signals, service control and readiness
++	}
++
+ 	g.isChild = len(os.Getenv(listenFDsEnv)) > 0 && os.Getppid() > 1
+ 
+ 	g.notify(statusMsg("Starting Gitea"))
+diff --git a/modules/graceful/manager_windows.go b/modules/graceful/manager_windows.go
+index be87202bbb..4e1bd653c6 100644
+--- a/modules/graceful/manager_windows.go
++++ b/modules/graceful/manager_windows.go
+@@ -34,6 +34,10 @@ func (g *Manager) start() {
+ 	pprof.SetGoroutineLabels(g.managerCtx)
+ 	defer pprof.SetGoroutineLabels(g.ctx)
+ 
++	if Embedded {
++		return // the host program handles signals, service control and readiness
++	}
++
+ 	if skip, _ := strconv.ParseBool(os.Getenv("SKIP_MINWINSVC")); skip {
+ 		log.Trace("Skipping SVC check as SKIP_MINWINSVC is set")
+ 		return
+diff --git a/routers/install/install.go b/routers/install/install.go
+index 1490947b87..54c4a59edb 100644
+--- a/routers/install/install.go
++++ b/routers/install/install.go
+@@ -491,7 +491,20 @@ func initAdminUser(ctx *context.Context, form *forms.InstallForm) bool {
+ 	return true
+ }
+ 
++// OnInstalled is set by a program that runs Gitea inside itself - such as a Caddy
++// plugin. The http.Server serving the install page is then the host's, and is not
++// shut down: OnInstalled is called instead, after the same delay, to switch to the
++// installed routes.
++var OnInstalled func()
++
+ func restartServer(ctx *context.Context) {
++	if OnInstalled != nil {
++		go func() {
++			time.Sleep(3 * time.Second) // as below: the post-install page loads first
++			OnInstalled()
++		}()
++		return
++	}
+ 	// Now get the http.Server from this request and shut it down
+ 	// NB: This is not our hammerable graceful shutdown this is http.Server.Shutdown
+ 	srv, _ := ctx.Value(http.ServerContextKey).(*http.Server)
+-- 
+2.56.0
+

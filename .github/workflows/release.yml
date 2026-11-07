@@ -1,0 +1,94 @@
+name: Release
+
+# Release this plugin: a tag of the Go module at the chosen commit - which
+# `xcaddy build --with github.com/wekan/caddy-gitea-plugin@<tag>` uses - and a GitHub
+# Release with the source:
+#
+#   caddy-gitea-plugin-source-with-history.zip     the repository with its history
+#   caddy-gitea-plugin-source-without-history.zip  the same without .git
+#
+# each with a .sha256 and a keyless cosign signature.
+#
+# The tag is v0.<YYYYMMDD>.<HHMM> (UTC): Go accepts only v0 and v1 versions for a
+# module path without a /vN suffix, so v29.0.0-... - Gitea's version - would be an
+# invalid version that xcaddy cannot fetch. Gitea's version is in the release title
+# and notes instead, from gitea/SOURCE.md.
+#
+#   gh workflow run release.yml -R wekan/caddy-gitea-plugin
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag, a v0 or v1 semantic version (empty = v0.<YYYYMMDD>.<HHMM>)'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: release-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          path: caddy-gitea-plugin
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: caddy-gitea-plugin/go.mod
+
+      - name: Test before releasing
+        working-directory: caddy-gitea-plugin
+        run: |
+          go telemetry off
+          CGO_ENABLED=0 go vet ./...
+          CGO_ENABLED=0 go test -count=1 ./...
+
+      - name: Name the release
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          [ -n "$TAG" ] || TAG="v0.$(date -u +%Y%m%d).$((10#$(date -u +%H%M)))"
+          [[ "$TAG" =~ ^v[01]\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || {
+            echo "::error::$TAG is not a v0 or v1 semantic version, which Go requires for this module."; exit 1; }
+          version="$(sed -n 's/.*version \([0-9][0-9.]*\), commit.*/\1/p' caddy-gitea-plugin/gitea/SOURCE.md)"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          echo "TITLE=$TAG - Gitea ${version:-?}" >> "$GITHUB_ENV"
+
+      - name: Zip the source, with and without history
+        run: |
+          set -euo pipefail
+          git -C caddy-gitea-plugin remote set-url origin https://github.com/wekan/caddy-gitea-plugin.git
+          python3 -I caddy-gitea-plugin/releases/source-zips.py caddy-gitea-plugin out
+          ( cd out && sha256sum -c *.sha256 )
+
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Sign, tag and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          for f in out/*; do cosign sign-blob "$f" --bundle "$f.sigstore.json" --yes; done
+          {
+            echo "Caddy plugin running Gitea inside Caddy: \`xcaddy build --with github.com/wekan/caddy-gitea-plugin@${TAG}\`"
+            echo ""
+            sed -n '/^| |/,/^$/p' caddy-gitea-plugin/gitea/SOURCE.md
+            echo ""
+            echo "The source is attached with and without its git history; every file has a \`.sha256\` and a keyless cosign signature."
+          } > notes.md
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" out/* --clobber
+          else
+            gh release create "$TAG" --target "$GITHUB_SHA" --title "$TITLE" --notes-file notes.md out/*
+          fi

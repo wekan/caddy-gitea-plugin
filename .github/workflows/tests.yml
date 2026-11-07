@@ -22,8 +22,13 @@ jobs:
           go-version-file: go.mod
       - name: Turn off Go toolchain telemetry
         run: go telemetry off
+      # CGO off, as Caddy is built: Gitea's SQLite is then the pure-Go one.
       - run: go vet ./...
+        env:
+          CGO_ENABLED: "0"
       - run: go test -count=1 ./...
+        env:
+          CGO_ENABLED: "0"
       - name: gofmt
         if: runner.os == 'Linux'
-        run: test -z "$(gofmt -l .)"
+        run: test -z "$(gofmt -l $(git ls-files '*.go' | grep -v '^gitea/'))"

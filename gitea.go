@@ -1,40 +1,42 @@
 // Package caddygitea is a Caddy plugin that runs Gitea, the version control server,
-// inside Caddy's lifetime and serves it through Caddy:
+// INSIDE Caddy: the needed parts of Gitea's source are in this repository (gitea/),
+// copied from upstream Gitea with wekan/gitea-patches and this repository's patches
+// applied (releases/sync-gitea.sh), so one Caddy binary serves Gitea itself.
 //
-//   - the app "gitea" starts the Gitea program - a release of
-//     https://github.com/wekan/gitea-patches - as a supervised child process,
-//     restarts it when it exits, and stops it when Caddy stops;
-//   - the handler "gitea" (http.handlers.gitea) proxies requests to it with Caddy's
-//     own reverse proxy, so Caddy does TLS, HTTP/2 and HTTP/3 in front of it.
+//   - the app "gitea" starts Gitea in Caddy's process, from its app.ini;
+//   - the handler "gitea" (http.handlers.gitea) serves a site from it - no proxy, no
+//     second process, no port of its own.
 //
 // Caddyfile:
 //
 //	{
 //		gitea {
-//			binary     /usr/local/bin/gitea
-//			work_path  /var/lib/gitea
-//			config     /var/lib/gitea/custom/conf/app.ini
+//			work_path /var/lib/gitea
 //		}
 //	}
 //	git.example.org {
 //		gitea
 //	}
-//
-// Gitea stays its own program: no Gitea code is compiled into Caddy, so Gitea and
-// Caddy are upgraded independently (WeKan's docs/Design/Multiverse/Go.md).
 package caddygitea
 
 import (
+	"context"
 	"fmt"
+	"net/http"
 	"os"
-	"path/filepath"
-	"sort"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/caddyserver/caddy/v2"
+	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"go.uber.org/zap"
 
-	"github.com/wekan/caddy-gitea-plugin/supervisor"
+	"github.com/wekan/caddy-gitea-plugin/gitea/modules/graceful"
+	"github.com/wekan/caddy-gitea-plugin/gitea/modules/setting"
+	"github.com/wekan/caddy-gitea-plugin/gitea/modules/templates"
+	"github.com/wekan/caddy-gitea-plugin/gitea/routers"
+	"github.com/wekan/caddy-gitea-plugin/gitea/routers/install"
 )
 
 func init() {
@@ -42,27 +44,31 @@ func init() {
 	caddy.RegisterModule(Handler{})
 }
 
-// App runs Gitea.
+// App runs Gitea inside Caddy.
 type App struct {
-	// Binary is the Gitea program. Default: "gitea" from PATH.
-	Binary string `json:"binary,omitempty"`
-	// WorkPath is Gitea's working directory (--work-path).
+	// WorkPath is Gitea's WORK_PATH: repositories, data and custom/ are below it.
 	WorkPath string `json:"work_path,omitempty"`
-	// Config is Gitea's app.ini (--config). Default: <work_path>/custom/conf/app.ini.
+	// CustomPath is Gitea's custom directory. Default: <work_path>/custom.
+	CustomPath string `json:"custom_path,omitempty"`
+	// Config is Gitea's app.ini. Default: <custom_path>/conf/app.ini.
 	Config string `json:"config,omitempty"`
-	// Dial is where Gitea listens, as Caddy's reverse proxy writes it: "host:port"
-	// or "unix//path". Default: read from app.ini's [server] PROTOCOL, HTTP_ADDR and
-	// HTTP_PORT - this plugin never writes app.ini.
-	Dial string `json:"dial,omitempty"`
-	// Args are added after "web".
-	Args []string `json:"args,omitempty"`
-	// Env is added to Gitea's environment.
-	Env map[string]string `json:"env,omitempty"`
-	// StopTimeout is how long Gitea gets to stop before it is killed. Default 30s.
+	// StopTimeout is how long Gitea gets to finish its work when Caddy exits.
+	// Default 30s.
 	StopTimeout caddy.Duration `json:"stop_timeout,omitempty"`
 
-	proc *supervisor.Process
-	log  *zap.Logger
+	log *zap.Logger
+}
+
+// Gitea's state - settings, database engine, queues, cron - is global to the
+// process, so there is one Gitea per Caddy process. It starts with the first
+// configuration that has the gitea app, stays running across configuration reloads,
+// and stops when Caddy exits.
+var running struct {
+	sync.Mutex
+	started bool
+	key     string
+	handler atomic.Pointer[http.Handler]
+	ready   atomic.Bool
 }
 
 // CaddyModule returns the Caddy module information.
@@ -70,80 +76,117 @@ func (App) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{ID: "gitea", New: func() caddy.Module { return new(App) }}
 }
 
-// Provision works out the command line and where Gitea listens.
+// Provision keeps the logger.
 func (a *App) Provision(ctx caddy.Context) error {
 	a.log = ctx.Logger()
-	if a.Binary == "" {
-		a.Binary = "gitea"
-	}
-	if a.Config == "" && a.WorkPath != "" {
-		a.Config = filepath.Join(a.WorkPath, "custom", "conf", "app.ini")
-	}
-	if a.Dial == "" {
-		dial, warn, err := DialFromINI(a.Config)
-		if err != nil {
-			return fmt.Errorf("gitea: %w; set dial in the gitea options", err)
-		}
-		if warn != "" {
-			a.log.Warn(warn)
-		}
-		a.Dial = dial
-	}
-	a.proc = supervisor.New(supervisor.Config{
-		Name:        "gitea",
-		Command:     a.Binary,
-		Args:        a.CommandArgs(),
-		Dir:         a.WorkPath,
-		Env:         envList(a.Env),
-		Dial:        a.Dial,
-		StopTimeout: time.Duration(a.StopTimeout),
-	}, a.log)
-	return nil
-}
-
-// CommandArgs is Gitea's command line after the program: the global options, then
-// "web". No --port: Gitea would write LOCAL_ROOT_URL into app.ini on every start.
-func (a *App) CommandArgs() []string {
-	var args []string
-	if a.WorkPath != "" {
-		args = append(args, "--work-path", a.WorkPath)
-	}
-	if a.Config != "" {
-		args = append(args, "--config", a.Config)
-	}
-	return append(append(args, "web"), a.Args...)
-}
-
-// Validate checks what can be checked before starting.
-func (a *App) Validate() error {
-	if a.Config != "" {
-		if _, err := os.Stat(a.Config); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("gitea: config %s: %w", a.Config, err)
-		}
+	if a.StopTimeout == 0 {
+		a.StopTimeout = caddy.Duration(30 * time.Second)
 	}
 	return nil
 }
 
-// Start starts Gitea.
-func (a *App) Start() error { return a.proc.Start() }
+func (a *App) key() string { return a.WorkPath + "\x00" + a.CustomPath + "\x00" + a.Config }
 
-// Stop stops Gitea and waits until it has exited.
-func (a *App) Stop() error { return a.proc.Stop() }
-
-// Ready reports whether Gitea accepts connections.
-func (a *App) Ready() bool { return a.proc != nil && a.proc.Ready() }
-
-func envList(m map[string]string) []string {
-	out := make([]string, 0, len(m))
-	for k, v := range m {
-		out = append(out, k+"="+v)
+// Start starts Gitea in the background: Caddy does not wait for its database
+// migrations; the handler answers 503 until Gitea is ready.
+func (a *App) Start() error {
+	running.Lock()
+	defer running.Unlock()
+	if running.started {
+		if running.key != a.key() {
+			a.log.Warn("Gitea's work_path, custom_path or config changed: restart Caddy to use them; Gitea keeps running with the old ones")
+		}
+		return nil
 	}
-	sort.Strings(out)
-	return out
+	running.started, running.key = true, a.key()
+
+	setting.InitWorkPathAndCommonConfig(os.Getenv, setting.ArgWorkPathAndCustomConf{
+		WorkPath: a.WorkPath, CustomPath: a.CustomPath, CustomConf: a.Config,
+	})
+	graceful.Embedded = true // Caddy owns the process: signals, systemd, its HTTP server
+	graceful.InitManager(context.Background())
+	_ = templates.PageRenderer()
+
+	go func() {
+		ctx := graceful.GetManager().HammerContext()
+		if !setting.InstallLock {
+			a.log.Info("Gitea is not installed yet: serving its install page", zap.String("config", setting.CustomConf))
+			routers.InitWebInstallPage(ctx)
+			install.OnInstalled = func() { a.serveInstalled(ctx) }
+			var h http.Handler = install.Routes()
+			running.handler.Store(&h)
+			running.ready.Store(true)
+			return
+		}
+		a.serveInstalled(ctx)
+	}()
+	return nil
+}
+
+func (a *App) serveInstalled(ctx context.Context) {
+	running.ready.Store(false)
+	routers.InitWebInstalled(ctx)
+	if _, err := os.Stat(setting.AppDataPath); err != nil {
+		a.log.Error("Gitea's APP_DATA_PATH does not exist", zap.String("path", setting.AppDataPath))
+	}
+	setting.AppDataTempDir("").RemoveOutdated(3 * 24 * time.Hour)
+	var h http.Handler = routers.NormalRoutes()
+	running.handler.Store(&h)
+	running.ready.Store(true)
+	a.log.Info("Gitea is ready", zap.String("version", setting.AppVer), zap.String("root_url", setting.AppURL))
+}
+
+// Stop stops Gitea when Caddy exits; on a configuration reload Gitea keeps running.
+func (a *App) Stop() error {
+	if !caddy.Exiting() {
+		return nil
+	}
+	running.Lock()
+	defer running.Unlock()
+	if !running.started {
+		return nil
+	}
+	running.ready.Store(false)
+	graceful.GetManager().DoGracefulShutdown()
+	select {
+	case <-graceful.GetManager().Done():
+		return nil
+	case <-time.After(time.Duration(a.StopTimeout)):
+		return fmt.Errorf("gitea: did not stop within %v", time.Duration(a.StopTimeout))
+	}
+}
+
+// Ready reports whether Gitea serves requests.
+func (a *App) Ready() bool { return running.ready.Load() }
+
+// Handler serves a site from the Gitea running in Caddy.
+type Handler struct{}
+
+// CaddyModule returns the Caddy module information.
+func (Handler) CaddyModule() caddy.ModuleInfo {
+	return caddy.ModuleInfo{ID: "http.handlers.gitea", New: func() caddy.Module { return new(Handler) }}
+}
+
+// Provision checks that the gitea app is configured.
+func (h *Handler) Provision(ctx caddy.Context) error {
+	_, err := ctx.AppIfConfigured("gitea")
+	return err // "app module gitea: not configured": add the gitea global option
+}
+
+// ServeHTTP lets Gitea answer, or answers 503 while it starts.
+func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.Handler) error {
+	p := running.handler.Load()
+	if p == nil || !running.ready.Load() {
+		w.Header().Set("Retry-After", "5")
+		return caddyhttp.Error(http.StatusServiceUnavailable, fmt.Errorf("Gitea is starting"))
+	}
+	(*p).ServeHTTP(w, r)
+	return nil
 }
 
 var (
-	_ caddy.App         = (*App)(nil)
-	_ caddy.Provisioner = (*App)(nil)
-	_ caddy.Validator   = (*App)(nil)
+	_ caddy.App                   = (*App)(nil)
+	_ caddy.Provisioner           = (*App)(nil)
+	_ caddy.Provisioner           = (*Handler)(nil)
+	_ caddyhttp.MiddlewareHandler = (*Handler)(nil)
 )
