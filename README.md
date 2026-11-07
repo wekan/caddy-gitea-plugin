@@ -95,6 +95,13 @@ They run a real Caddy with the embedded Gitea on a new SQLite database: `503` wh
 starts, then its login page - in Finnish for a Finnish browser - its embedded assets
 and its own 404; and the supervisor with real child processes.
 
+Gitea's own tests are not in `gitea/`, so `go get` of the plugin does not download
+them. [`releases/copy-gitea-tests.py`](releases/copy-gitea-tests.py) copies them -
+with the packages only they need and their fixtures - into a COPY of this
+repository, from the Gitea source `gitea/` was made from; Weddy's
+`tests/gitea/run.sh` makes that copy and runs them, CGO off and no build tags,
+the way Weddy builds Gitea in.
+
 ## License
 
 This repository's own files are MIT - see [LICENSE](LICENSE). Gitea is MIT too:
