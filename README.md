@@ -48,6 +48,7 @@ and sync again.
 | Patch | Why |
 |-------|-----|
 | [`embedded-in-a-host`](dist/gitea/embedded-in-a-host.md) | Inside Caddy, Gitea must not handle Caddy's signals - a SIGHUP would make it "restart" by re-executing Caddy's binary - nor shut down the HTTP server after its install page, which is Caddy's |
+| [`security-hardening`](dist/gitea/security-hardening.md) | What code scanning found worth changing: the container tag list's allocation from `?n=`, two `int64` to `int` conversions that wrap on 32-bit platforms, and credentials in the access log. The rest of the alerts and why they stay are in the [Hall of Fame](https://github.com/wekan/caddy-gitea-plugin/wiki/Hall-of-Fame) |
 
 ## Modules
 
