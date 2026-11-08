@@ -66,6 +66,48 @@ func parseRequestIDFromRequestHeader(req *http.Request) string {
 	return requestID
 }
 
+// redactedQueryKeys and redactedHeaders carry credentials: a request with any of
+// them is logged with "[REDACTED]" in their place, never their value.
+var (
+	redactedQueryKeys = []string{"token", "access_token", "private_token", "password"}
+	redactedHeaders   = []string{"Authorization", "Cookie", "X-Gitea-Otp", "Proxy-Authorization"}
+)
+
+// redactedRequest is req as the access log may show it: a shallow copy whose URL
+// and headers have the credentials replaced. req itself is not changed.
+func redactedRequest(req *http.Request) *http.Request {
+	changed := false
+	u := *req.URL
+	if q := u.Query(); len(q) > 0 {
+		for _, k := range redactedQueryKeys {
+			if q.Has(k) {
+				q.Set(k, "[REDACTED]")
+				changed = true
+			}
+		}
+		if changed {
+			u.RawQuery = q.Encode()
+		}
+	}
+	h, cloned := req.Header, false
+	for _, k := range redactedHeaders {
+		if h.Get(k) != "" {
+			if !cloned {
+				h, cloned = h.Clone(), true // req's own headers stay as they are
+			}
+			h.Set(k, "[REDACTED]")
+			changed = true
+		}
+	}
+	if !changed {
+		return req
+	}
+	r := new(http.Request)
+	*r = *req
+	r.URL, r.Header, r.RequestURI = &u, h, u.RequestURI()
+	return r
+}
+
 type accessLogRecorder struct {
 	logger        log.BaseLogger
 	logTemplate   *template.Template
@@ -92,7 +134,7 @@ func (lr *accessLogRecorder) record(start time.Time, respWriter ResponseWriter, 
 		Ctx: map[string]any{
 			"RemoteAddr": req.RemoteAddr,
 			"RemoteHost": reqHost,
-			"Req":        req,
+			"Req":        redactedRequest(req),
 		},
 		RequestID: &requestID,
 	}

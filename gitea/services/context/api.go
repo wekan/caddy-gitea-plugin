@@ -7,6 +7,7 @@ package context
 import (
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"slices"
@@ -138,7 +139,7 @@ func GetAPIContext(req *http.Request) *APIContext {
 }
 
 func genAPILinks(curURL *url.URL, total int64, pageSize, curPage int) []string {
-	p := paginator.New(int(total), pageSize, curPage, 0)
+	p := paginator.New(int(min(total, int64(math.MaxInt))), pageSize, curPage, 0)
 	links := make([]string, 0, 4)
 
 	if p.HasNext() {

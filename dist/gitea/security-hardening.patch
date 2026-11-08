@@ -1,0 +1,191 @@
+From 023a5915723a86b3ee37e030edc4d3c6d73d9ad0 Mon Sep 17 00:00:00 2001
+From: Lauri Ojansivu <x@xet7.org>
+Date: Sun, 8 Nov 2026 02:32:58 +0200
+Subject: [PATCH] Harden what code scanning found: the container tag list,
+ 32-bit conversions, the access log.
+
+- The container registry's tag list took the capacity of its slice from the
+  request's ?n=, so /v2/<image>/tags/list?n=1000000000 reserved gigabytes
+  before reading one row; the capacity is now at most 100 (the query still
+  takes n as its limit).
+- genAPILinks converted the int64 total to int without a bound, and the GitHub
+  migration's GetIssue an int64 issue number; on 32-bit platforms both could
+  wrap. The total is clamped as newPagination already does, and an issue
+  number outside 1..MaxInt32 is refused.
+- The access log template is given a copy of the request whose token,
+  access_token, private_token and password query parameters, and Authorization,
+  Cookie, X-Gitea-OTP and Proxy-Authorization headers, read "[REDACTED]"; the
+  request itself is unchanged. TestRedactedRequest pins both.
+---
+ models/packages/container/search.go        |  4 +-
+ services/context/access_log.go             | 44 +++++++++++++++++++++-
+ services/context/access_log_redact_test.go | 35 +++++++++++++++++
+ services/context/api.go                    |  3 +-
+ services/migrations/github.go              |  4 ++
+ 5 files changed, 87 insertions(+), 3 deletions(-)
+ create mode 100644 services/context/access_log_redact_test.go
+
+diff --git a/models/packages/container/search.go b/models/packages/container/search.go
+index df9a2d5537..1c4469b35f 100644
+--- a/models/packages/container/search.go
++++ b/models/packages/container/search.go
+@@ -155,7 +155,9 @@ func GetImageTags(ctx context.Context, ownerID int64, image string, n int, last
+ 	if n > 0 {
+ 		sess = sess.Limit(n)
+ 
+-		tags = make([]string, 0, n)
++		// n is the request's ?n=: the query is limited by it, but the slice's capacity
++		// is not taken from it - n=1000000000 would reserve gigabytes before one row.
++		tags = make([]string, 0, min(n, 100))
+ 	} else {
+ 		tags = make([]string, 0, 10)
+ 	}
+diff --git a/services/context/access_log.go b/services/context/access_log.go
+index abf5ae3882..facaceb80f 100644
+--- a/services/context/access_log.go
++++ b/services/context/access_log.go
+@@ -66,6 +66,48 @@ func parseRequestIDFromRequestHeader(req *http.Request) string {
+ 	return requestID
+ }
+ 
++// redactedQueryKeys and redactedHeaders carry credentials: a request with any of
++// them is logged with "[REDACTED]" in their place, never their value.
++var (
++	redactedQueryKeys = []string{"token", "access_token", "private_token", "password"}
++	redactedHeaders   = []string{"Authorization", "Cookie", "X-Gitea-Otp", "Proxy-Authorization"}
++)
++
++// redactedRequest is req as the access log may show it: a shallow copy whose URL
++// and headers have the credentials replaced. req itself is not changed.
++func redactedRequest(req *http.Request) *http.Request {
++	changed := false
++	u := *req.URL
++	if q := u.Query(); len(q) > 0 {
++		for _, k := range redactedQueryKeys {
++			if q.Has(k) {
++				q.Set(k, "[REDACTED]")
++				changed = true
++			}
++		}
++		if changed {
++			u.RawQuery = q.Encode()
++		}
++	}
++	h, cloned := req.Header, false
++	for _, k := range redactedHeaders {
++		if h.Get(k) != "" {
++			if !cloned {
++				h, cloned = h.Clone(), true // req's own headers stay as they are
++			}
++			h.Set(k, "[REDACTED]")
++			changed = true
++		}
++	}
++	if !changed {
++		return req
++	}
++	r := new(http.Request)
++	*r = *req
++	r.URL, r.Header, r.RequestURI = &u, h, u.RequestURI()
++	return r
++}
++
+ type accessLogRecorder struct {
+ 	logger        log.BaseLogger
+ 	logTemplate   *template.Template
+@@ -92,7 +134,7 @@ func (lr *accessLogRecorder) record(start time.Time, respWriter ResponseWriter,
+ 		Ctx: map[string]any{
+ 			"RemoteAddr": req.RemoteAddr,
+ 			"RemoteHost": reqHost,
+-			"Req":        req,
++			"Req":        redactedRequest(req),
+ 		},
+ 		RequestID: &requestID,
+ 	}
+diff --git a/services/context/access_log_redact_test.go b/services/context/access_log_redact_test.go
+new file mode 100644
+index 0000000000..40d5e0c173
+--- /dev/null
++++ b/services/context/access_log_redact_test.go
+@@ -0,0 +1,35 @@
++// Copyright 2026 The Gitea Authors. All rights reserved.
++// SPDX-License-Identifier: MIT
++
++package context
++
++import (
++	"net/http/httptest"
++	"strings"
++	"testing"
++
++	"github.com/stretchr/testify/assert"
++)
++
++func TestRedactedRequest(t *testing.T) {
++	req := httptest.NewRequest("GET", "/api/v1/repos?token=secret-token&page=2&access_token=other-secret", nil)
++	req.Header.Set("Authorization", "token secret-header")
++	req.Header.Set("Cookie", "i_like_gitea=secret-cookie")
++	req.Header.Set("Accept", "application/json")
++
++	r := redactedRequest(req)
++	logged := r.URL.String() + " " + r.RequestURI + " " + strings.Join(r.Header.Values("Authorization"), ",") + " " + r.Header.Get("Cookie")
++	for _, secret := range []string{"secret-token", "other-secret", "secret-header", "secret-cookie"} {
++		assert.NotContains(t, logged, secret)
++	}
++	assert.Equal(t, "2", r.URL.Query().Get("page"), "other query parameters stay")
++	assert.Equal(t, "application/json", r.Header.Get("Accept"), "other headers stay")
++
++	// The request itself is not changed: the handler that runs next still has it.
++	assert.Equal(t, "secret-token", req.URL.Query().Get("token"))
++	assert.Equal(t, "token secret-header", req.Header.Get("Authorization"))
++
++	// A request without credentials is logged as it is.
++	plain := httptest.NewRequest("GET", "/explore/repos?q=gitea", nil)
++	assert.Same(t, plain, redactedRequest(plain))
++}
+diff --git a/services/context/api.go b/services/context/api.go
+index f248a1951f..9025ec71ee 100644
+--- a/services/context/api.go
++++ b/services/context/api.go
+@@ -7,6 +7,7 @@ package context
+ import (
+ 	"errors"
+ 	"fmt"
++	"math"
+ 	"net/http"
+ 	"net/url"
+ 	"slices"
+@@ -138,7 +139,7 @@ func GetAPIContext(req *http.Request) *APIContext {
+ }
+ 
+ func genAPILinks(curURL *url.URL, total int64, pageSize, curPage int) []string {
+-	p := paginator.New(int(total), pageSize, curPage, 0)
++	p := paginator.New(int(min(total, int64(math.MaxInt))), pageSize, curPage, 0)
+ 	links := make([]string, 0, 4)
+ 
+ 	if p.HasNext() {
+diff --git a/services/migrations/github.go b/services/migrations/github.go
+index 3430778f2f..404b4e9de5 100644
+--- a/services/migrations/github.go
++++ b/services/migrations/github.go
+@@ -8,6 +8,7 @@ import (
+ 	"context"
+ 	"fmt"
+ 	"io"
++	"math"
+ 	"net/http"
+ 	"net/url"
+ 	"slices"
+@@ -538,6 +539,9 @@ func (g *GithubDownloaderV3) convertGithubIssue(ctx context.Context, issue *gith
+ 
+ // GetIssue recovers an issue omitted from the repository listing.
+ func (g *GithubDownloaderV3) GetIssue(ctx context.Context, number int64) (*base.Issue, error) {
++	if number < 1 || number > math.MaxInt32 {
++		return nil, fmt.Errorf("issue number %d is out of range", number)
++	}
+ 	g.waitAndPickClient(ctx)
+ 	issue, resp, err := g.getClient().Issues.Get(ctx, g.repoOwner, g.repoName, int(number))
+ 	g.setRateFromResponse(resp)
+-- 
+2.56.0
+
