@@ -67,7 +67,10 @@ type Pagination struct {
 // "pagingNum" is "page size" or "limit", "current" is "page"
 // total=-1 means only showing prev/next
 func newPagination(total int64, pagingNum, current, numPages int) *Pagination {
-	totalInt := int(min(total, int64(math.MaxInt)))
+	if total > math.MaxInt32 { // a bound that holds where int is 32 bits too
+		total = math.MaxInt32
+	}
+	totalInt := int(total)
 	p := &Pagination{}
 	p.Paginator = paginator.New(totalInt, pagingNum, current, numPages)
 	return p

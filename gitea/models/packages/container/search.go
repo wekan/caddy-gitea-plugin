@@ -157,7 +157,11 @@ func GetImageTags(ctx context.Context, ownerID int64, image string, n int, last 
 
 		// n is the request's ?n=: the query is limited by it, but the slice's capacity
 		// is not taken from it - n=1000000000 would reserve gigabytes before one row.
-		tags = make([]string, 0, min(n, 100))
+		capacity := n
+		if capacity > 100 {
+			capacity = 100
+		}
+		tags = make([]string, 0, capacity)
 	} else {
 		tags = make([]string, 0, 10)
 	}

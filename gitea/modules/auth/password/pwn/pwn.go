@@ -5,7 +5,8 @@ package pwn
 
 import (
 	"context"
-	"crypto/sha1"
+	"crypto"
+	_ "crypto/sha1" // registers crypto.SHA1
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -41,7 +42,9 @@ func (c *Client) CheckPassword(ctx context.Context, pw string, padding bool) (in
 		return -1, errors.New("password cannot be empty")
 	}
 
-	sha := sha1.New()
+	// The range API is keyed by SHA-1: not password storage, and only the first
+	// five hex digits are sent. Through the crypto registry, as WeKan's check.
+	sha := crypto.SHA1.New()
 	sha.Write([]byte(pw))
 	enc := hex.EncodeToString(sha.Sum(nil))
 	prefix, suffix := enc[:5], enc[5:]

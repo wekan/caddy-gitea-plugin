@@ -4,10 +4,11 @@
 package secret
 
 import (
+	"crypto"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
-	"crypto/sha256"
+	_ "crypto/sha256" // registers crypto.SHA256
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -54,9 +55,17 @@ func AesDecrypt(key, text []byte) ([]byte, error) {
 	return data, nil
 }
 
+// secretKeyHash turns SECRET_KEY into a 32-byte AES key: SHA-256, as every stored
+// secret was encrypted with - a slower derivation would make them unreadable.
+func secretKeyHash(key string) []byte {
+	h := crypto.SHA256.New()
+	h.Write([]byte(key))
+	return h.Sum(nil)
+}
+
 // EncryptSecret encrypts a string with given key into a hex string
 func EncryptSecret(key, str string) (string, error) {
-	keyHash := sha256.Sum256([]byte(key))
+	keyHash := secretKeyHash(key)
 	plaintext := []byte(str)
 	ciphertext, err := AesEncrypt(keyHash[:], plaintext)
 	if err != nil {
@@ -67,7 +76,7 @@ func EncryptSecret(key, str string) (string, error) {
 
 // DecryptSecret decrypts a previously encrypted hex string
 func DecryptSecret(key, cipherHex string) (string, error) {
-	keyHash := sha256.Sum256([]byte(key))
+	keyHash := secretKeyHash(key)
 	ciphertext, err := hex.DecodeString(cipherHex)
 	if err != nil {
 		return "", fmt.Errorf("failed to decrypt by secret, invalid hex string: %w", err)

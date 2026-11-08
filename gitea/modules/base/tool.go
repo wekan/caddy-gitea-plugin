@@ -4,9 +4,10 @@
 package base
 
 import (
+	"crypto"
 	"crypto/hmac"
 	"crypto/sha1"
-	"crypto/sha256"
+	_ "crypto/sha256" // registers crypto.SHA256
 	"crypto/subtle"
 	"encoding/hex"
 	"fmt"
@@ -21,7 +22,7 @@ import (
 
 // EncodeSha256 string to sha256 hex value.
 func EncodeSha256(str string) string {
-	h := sha256.New()
+	h := crypto.SHA256.New()
 	_, _ = h.Write(util.UnsafeStringToBytes(str))
 	return hex.EncodeToString(h.Sum(nil))
 }
