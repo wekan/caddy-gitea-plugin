@@ -56,7 +56,15 @@ func TestCaddyfile(t *testing.T) {
 // A real Caddy runs the embedded Gitea - its migrations on a new SQLite database,
 // its templates and assets from gitea/, wekan/gitea-patches' Finnish - and serves it.
 func TestCaddyRunsGiteaInside(t *testing.T) {
-	work := t.TempDir()
+	// Not t.TempDir(): Gitea's state is process-wide and outlives caddy.Stop() -
+	// only Caddy exiting stops it (App.Stop) - so gitea.db stays open until this
+	// test process ends. Windows cannot remove an open file, and t.TempDir()'s
+	// cleanup failed the test there; the removal is best effort instead.
+	work, err := os.MkdirTemp("", "TestCaddyRunsGiteaInside")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(work) })
 	site := freeAddr(t)
 	// Gitea maintains ~/.ssh/authorized_keys of the user it runs as by default: the
 	// test points it, and HOME, into its own directory.
