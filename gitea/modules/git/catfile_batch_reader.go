@@ -22,7 +22,7 @@ import (
 
 type catFileBatchCommunicator struct {
 	closeFunc   atomic.Pointer[func(err error)]
-	reqWriter   io.Writer
+	reqWriter   gitcmd.PipeWriter // a concrete pipe to git, not any io.Writer
 	respReader  *bufio.Reader
 	debugGitCmd *gitcmd.Command
 	closed      chan struct{}

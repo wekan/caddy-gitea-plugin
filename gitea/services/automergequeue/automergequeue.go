@@ -8,10 +8,14 @@ import (
 	"errors"
 	"strconv"
 
+	"github.com/wekan/caddy-gitea-plugin/gitea/models/db"
 	issues_model "github.com/wekan/caddy-gitea-plugin/gitea/models/issues"
+	pull_model "github.com/wekan/caddy-gitea-plugin/gitea/models/pull"
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/git"
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/log"
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/queue"
+
+	"xorm.io/builder"
 )
 
 // AutoMergeItem is for the unique queue, so the item type can't be JSON which doesn't have deterministic key order.
@@ -31,6 +35,13 @@ func StartAutoMergeCheckByPullCommit(pullID int64, commitID string) {
 }
 
 func StartAutoMergeCheckByPullHead(ctx context.Context, pull *issues_model.PullRequest) {
+	if scheduled, err := db.Exist[pull_model.AutoMerge](ctx, builder.Eq{"pull_id": pull.ID}); !scheduled {
+		if err != nil {
+			log.Error("Exist AutoMerge: %v", err)
+		}
+		return
+	}
+
 	if err := pull.LoadBaseRepo(ctx); err != nil {
 		log.Error("LoadBaseRepo: %v", err)
 		return

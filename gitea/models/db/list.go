@@ -24,6 +24,24 @@ type Paginator interface {
 	IsListAll() bool
 }
 
+// maxPageCapacity is the most elements a page's result slice reserves up front.
+const maxPageCapacity = 100
+
+// PageCapacity is the capacity to make a page's result slice with: n, but never
+// more than maxPageCapacity and never negative. A page size can come from the
+// request (?limit=, ?n=) and does not always pass through ListOptions'
+// bounds first, so a capacity taken from it as is could reserve gigabytes before
+// one row is read; append grows the slice when a page really holds more.
+func PageCapacity(n int) int {
+	if n <= 0 {
+		return 0
+	}
+	if n > maxPageCapacity {
+		return maxPageCapacity
+	}
+	return n
+}
+
 // SetSessionPagination sets pagination for a database session
 func SetSessionPagination(sess Engine, p Paginator) {
 	skip, take := p.GetSkipTake()

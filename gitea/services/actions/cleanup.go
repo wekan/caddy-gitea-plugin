@@ -13,6 +13,7 @@ import (
 	git_model "github.com/wekan/caddy-gitea-plugin/gitea/models/git"
 	actions_module "github.com/wekan/caddy-gitea-plugin/gitea/modules/actions"
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/container"
+	"github.com/wekan/caddy-gitea-plugin/gitea/modules/git"
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/log"
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/setting"
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/storage"
@@ -257,6 +258,14 @@ func DeleteRun(ctx context.Context, run *actions_model.ActionRun) error {
 		return nil
 	}); err != nil {
 		return err
+	}
+
+	if run.TriggerEvent == actions_module.GithubEventPullRequest {
+		if err := run.LoadRepo(ctx); err != nil {
+			log.Error("LoadRepo for run %d: %v", run.ID, err)
+		} else if err := git.RemoveRef(ctx, run.Repo, git.RunRefNameFromRunID(run.ID).String()); err != nil {
+			log.Error("RemoveRef for run %d: %v", run.ID, err)
+		}
 	}
 
 	actions_model.UpdateRepoRunsNumbers(ctx, repoID)

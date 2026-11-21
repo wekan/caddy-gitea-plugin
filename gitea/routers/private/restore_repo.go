@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/json"
+	"github.com/wekan/caddy-gitea-plugin/gitea/services/audit"
 	myCtx "github.com/wekan/caddy-gitea-plugin/gitea/services/context"
 	"github.com/wekan/caddy-gitea-plugin/gitea/services/migrations"
 )
@@ -32,7 +33,7 @@ func RestoreRepo(ctx *myCtx.PrivateContext) {
 	}
 
 	if err := migrations.RestoreRepository(
-		ctx,
+		audit.WithCLIDoer(ctx),
 		params.RepoDir,
 		params.OwnerName,
 		params.RepoName,

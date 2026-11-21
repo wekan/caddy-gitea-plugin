@@ -6,6 +6,8 @@ package attachment
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -28,11 +30,13 @@ func NewAttachment(ctx context.Context, attach *repo_model.Attachment, file io.R
 
 	err := db.WithTx(ctx, func(ctx context.Context) error {
 		attach.UUID = uuid.New().String()
-		size, err := storage.Attachments.Save(attach.RelativePath(), file, size)
+		hasher := sha256.New()
+		size, err := storage.Attachments.Save(attach.RelativePath(), io.TeeReader(file, hasher), size)
 		if err != nil {
 			return fmt.Errorf("Attachments.Save: %w", err)
 		}
 		attach.Size = size
+		attach.HashSHA256 = hex.EncodeToString(hasher.Sum(nil))
 		return db.Insert(ctx, attach)
 	})
 
@@ -68,7 +72,9 @@ func UploadAttachmentForRelease(ctx context.Context, file *UploaderFile, attach 
 
 func uploadAttachment(ctx context.Context, file *UploaderFile, allowedTypes string, maxFileSize int64, attach *repo_model.Attachment) (*repo_model.Attachment, error) {
 	src := file.rd
-	if file.size < 0 {
+	// A negative limit is no limit; http.MaxBytesReader would take it as 0 and refuse
+	// every byte.
+	if file.size < 0 && maxFileSize >= 0 {
 		src = http.MaxBytesReader(file.respWriter, src, maxFileSize)
 	}
 	buf := make([]byte, 1024)

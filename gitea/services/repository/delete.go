@@ -11,6 +11,7 @@ import (
 	actions_model "github.com/wekan/caddy-gitea-plugin/gitea/models/actions"
 	activities_model "github.com/wekan/caddy-gitea-plugin/gitea/models/activities"
 	admin_model "github.com/wekan/caddy-gitea-plugin/gitea/models/admin"
+	audit_model "github.com/wekan/caddy-gitea-plugin/gitea/models/audit"
 	"github.com/wekan/caddy-gitea-plugin/gitea/models/db"
 	git_model "github.com/wekan/caddy-gitea-plugin/gitea/models/git"
 	issues_model "github.com/wekan/caddy-gitea-plugin/gitea/models/issues"
@@ -31,6 +32,7 @@ import (
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/storage"
 	actions_service "github.com/wekan/caddy-gitea-plugin/gitea/services/actions"
 	asymkey_service "github.com/wekan/caddy-gitea-plugin/gitea/services/asymkey"
+	"github.com/wekan/caddy-gitea-plugin/gitea/services/audit"
 	issue_service "github.com/wekan/caddy-gitea-plugin/gitea/services/issue"
 
 	"xorm.io/builder"
@@ -414,6 +416,7 @@ func DeleteOwnerRepositoriesDirectly(ctx context.Context, owner *user_model.User
 			if err := DeleteRepositoryDirectly(ctx, repo.ID); err != nil {
 				return fmt.Errorf("unable to delete repository %s for %s[%d]. Error: %w", repo.Name, owner.Name, owner.ID, err)
 			}
+			audit.Record(ctx, audit_model.RepositoryDelete, repo)
 		}
 	}
 	return nil

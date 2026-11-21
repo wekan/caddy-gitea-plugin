@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	audit_model "github.com/wekan/caddy-gitea-plugin/gitea/models/audit"
 	"github.com/wekan/caddy-gitea-plugin/gitea/models/db"
 	repo_model "github.com/wekan/caddy-gitea-plugin/gitea/models/repo"
 	system_model "github.com/wekan/caddy-gitea-plugin/gitea/models/system"
@@ -17,6 +18,7 @@ import (
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/git/gitcmd"
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/log"
 	repo_module "github.com/wekan/caddy-gitea-plugin/gitea/modules/repository"
+	"github.com/wekan/caddy-gitea-plugin/gitea/services/audit"
 
 	"xorm.io/builder"
 )
@@ -164,8 +166,10 @@ func DeleteMissingRepositories(ctx context.Context, doer *user_model.User) error
 		if err := DeleteRepositoryDirectly(ctx, repo.ID); err != nil {
 			log.Error("Failed to DeleteRepository %-v: Error: %v", repo, err)
 			if err2 := system_model.CreateRepositoryNotice("Failed to DeleteRepository (%s) [%d]: Error: %v", repo.FullName(), repo.ID, err); err2 != nil {
-				log.Error("CreateRepositoryNotice: %v", err)
+				log.Error("CreateRepositoryNotice: %v", err2)
 			}
+		} else {
+			audit.RecordAs(ctx, doer, audit_model.RepositoryDelete, repo)
 		}
 	}
 	return nil

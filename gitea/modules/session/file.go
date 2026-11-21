@@ -28,6 +28,11 @@ func newFileBackend(rootPath string, maxLifetime int64) *fileBackend {
 	return &fileBackend{rootPath: filepath.Clean(rootPath), maxLifetime: time.Duration(maxLifetime) * time.Second}
 }
 
+// errSessionFileName is returned for a session ID that cannot name a file inside
+// rootPath. startSession only takes 16 characters of [0-9a-z] from the cookie; each
+// method checks again where it builds the path, so the file is always under rootPath.
+var errSessionFileName = errors.New("invalid session ID for a session file")
+
 func (b *fileBackend) filepath(sid string) string {
 	return filepath.Join(b.rootPath, sid[0:1], sid[1:2], sid)
 }
@@ -40,6 +45,9 @@ func ignoreNotExist(err error) error {
 }
 
 func (b *fileBackend) load(sid string) ([]byte, error) {
+	if len(sid) < 2 || !filepath.IsLocal(sid) {
+		return nil, errSessionFileName
+	}
 	b.lock.RLock()
 	defer b.lock.RUnlock()
 	filename := b.filepath(sid)
@@ -62,6 +70,9 @@ func (b *fileBackend) load(sid string) ([]byte, error) {
 }
 
 func (b *fileBackend) save(sid string, data []byte, create bool) error {
+	if len(sid) < 2 || !filepath.IsLocal(sid) {
+		return errSessionFileName
+	}
 	b.lock.RLock()
 	defer b.lock.RUnlock()
 	filename := b.filepath(sid)
@@ -87,6 +98,9 @@ func (b *fileBackend) save(sid string, data []byte, create bool) error {
 }
 
 func (b *fileBackend) destroy(sid string) error {
+	if len(sid) < 2 || !filepath.IsLocal(sid) {
+		return errSessionFileName
+	}
 	b.lock.Lock()
 	defer b.lock.Unlock()
 	return ignoreNotExist(os.Remove(b.filepath(sid)))

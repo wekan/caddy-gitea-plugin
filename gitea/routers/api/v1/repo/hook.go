@@ -17,6 +17,7 @@ import (
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/web"
 	webhook_module "github.com/wekan/caddy-gitea-plugin/gitea/modules/webhook"
 	"github.com/wekan/caddy-gitea-plugin/gitea/routers/api/v1/utils"
+	"github.com/wekan/caddy-gitea-plugin/gitea/services/audit"
 	"github.com/wekan/caddy-gitea-plugin/gitea/services/context"
 	"github.com/wekan/caddy-gitea-plugin/gitea/services/convert"
 	webhook_service "github.com/wekan/caddy-gitea-plugin/gitea/services/webhook"
@@ -418,13 +419,14 @@ func DeleteHook(ctx *context.APIContext) {
 	//     "$ref": "#/responses/empty"
 	//   default:
 	//     "$ref": "#/responses/error"
-	if err := webhook.DeleteWebhookByRepoID(ctx, ctx.Repo.Repository.ID, ctx.PathParamInt64("id")); err != nil {
-		if webhook.IsErrWebhookNotExist(err) {
-			ctx.APIErrorNotFound()
-		} else {
-			ctx.APIErrorInternal(err)
-		}
+	hook, err := utils.GetRepoHook(ctx, ctx.Repo.Repository.ID, ctx.PathParamInt64("id"))
+	if err != nil {
 		return
 	}
+	if err := webhook.DeleteWebhookByRepoID(ctx, ctx.Repo.Repository.ID, hook.ID); err != nil {
+		ctx.APIErrorAuto(err)
+		return
+	}
+	audit.RecordScoped(ctx, nil, ctx.Repo.Repository, audit.WebhookRemove, "webhook", hook.URL)
 	ctx.Status(http.StatusNoContent)
 }

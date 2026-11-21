@@ -52,6 +52,7 @@ import (
 	"github.com/wekan/caddy-gitea-plugin/gitea/services/repository/archiver"
 	"github.com/wekan/caddy-gitea-plugin/gitea/services/task"
 	"github.com/wekan/caddy-gitea-plugin/gitea/services/uinotification"
+	user_service "github.com/wekan/caddy-gitea-plugin/gitea/services/user"
 	"github.com/wekan/caddy-gitea-plugin/gitea/services/webhook"
 	websocket_service "github.com/wekan/caddy-gitea-plugin/gitea/services/websocket"
 )
@@ -158,6 +159,7 @@ func InitWebInstalled(ctx context.Context) {
 	mustInitCtx(ctx, mailer_incoming.Init)
 
 	mustInitCtx(ctx, syncAppConfForGit)
+	mustInitCtx(ctx, user_service.SyncForcedActivityVisibility)
 
 	mustInit(ssh.Init)
 

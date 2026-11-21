@@ -5,15 +5,18 @@ package convert
 
 import (
 	"context"
+	"strings"
 
 	git_model "github.com/wekan/caddy-gitea-plugin/gitea/models/git"
 	issues_model "github.com/wekan/caddy-gitea-plugin/gitea/models/issues"
 	"github.com/wekan/caddy-gitea-plugin/gitea/models/perm"
 	access_model "github.com/wekan/caddy-gitea-plugin/gitea/models/perm/access"
+	pull_model "github.com/wekan/caddy-gitea-plugin/gitea/models/pull"
 	repo_model "github.com/wekan/caddy-gitea-plugin/gitea/models/repo"
 	user_model "github.com/wekan/caddy-gitea-plugin/gitea/models/user"
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/cache"
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/cachegroup"
+	"github.com/wekan/caddy-gitea-plugin/gitea/modules/container"
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/git"
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/log"
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/setting"
@@ -21,6 +24,16 @@ import (
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/util"
 	"github.com/wekan/caddy-gitea-plugin/gitea/services/gitdiff"
 )
+
+func toAPIAutoMerge(ctx context.Context, autoMerge *pull_model.AutoMerge) *api.PullRequestAutoMerge {
+	commitTitle, commitMessage, _ := strings.Cut(autoMerge.Message, "\n\n")
+	return &api.PullRequestAutoMerge{
+		EnabledBy:     ToUser(ctx, autoMerge.Doer, nil),
+		MergeMethod:   string(autoMerge.MergeStyle),
+		CommitTitle:   commitTitle,
+		CommitMessage: commitMessage,
+	}
+}
 
 // ToAPIPullRequest hides a head repository the doer cannot see
 func ToAPIPullRequest(ctx context.Context, pr *issues_model.PullRequest, doer *user_model.User) *api.PullRequest {
@@ -272,6 +285,12 @@ func toAPIPullRequest(ctx context.Context, pr *issues_model.PullRequest, doer *u
 		apiPullRequest.Merged = pr.MergedUnix.AsTimePtr()
 		apiPullRequest.MergedCommitID = &pr.MergedCommitID
 		apiPullRequest.MergedBy = ToUser(ctx, pr.Merger, nil)
+	} else if !pr.Issue.IsClosed {
+		if scheduled, autoMerge, err := pull_model.GetScheduledMergeByPullID(ctx, pr.ID); err != nil {
+			log.Error("GetScheduledMergeByPullID[%d]: %v", pr.ID, err)
+		} else if scheduled {
+			apiPullRequest.AutoMerge = toAPIAutoMerge(ctx, autoMerge)
+		}
 	}
 
 	return apiPullRequest
@@ -346,6 +365,14 @@ func ToAPIPullRequests(ctx context.Context, baseRepo *repo_model.Repository, prs
 	}
 
 	apiRepo := ToRepo(ctx, baseRepo, baseRepoPerm)
+
+	autoMerges, err := pull_model.GetScheduledMergeByPullIDs(ctx, container.FilterSlice(prs, func(pr *issues_model.PullRequest) (int64, bool) {
+		return pr.ID, !pr.Issue.IsClosed
+	}))
+	if err != nil {
+		return nil, err
+	}
+
 	baseBranchCache := make(map[string]*git_model.Branch)
 	apiPullRequests := make([]*api.PullRequest, 0, len(prs))
 	for _, pr := range prs {
@@ -479,6 +506,8 @@ func ToAPIPullRequests(ctx context.Context, baseRepo *repo_model.Repository, prs
 			apiPullRequest.Merged = pr.MergedUnix.AsTimePtr()
 			apiPullRequest.MergedCommitID = &pr.MergedCommitID
 			apiPullRequest.MergedBy = ToUser(ctx, pr.Merger, nil)
+		} else if autoMerge := autoMerges[pr.ID]; autoMerge != nil {
+			apiPullRequest.AutoMerge = toAPIAutoMerge(ctx, autoMerge)
 		}
 
 		// Do not provide "ChangeFiles/Additions/Deletions" for the PR list, because the "diff" is quite slow

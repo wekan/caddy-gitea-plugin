@@ -72,7 +72,7 @@ func GetBadgeUsers(ctx context.Context, opts *GetBadgeUsersOptions) ([]*User, in
 		db.SetSessionPagination(sess, opts)
 	}
 
-	users := make([]*User, 0, opts.PageSize)
+	users := make([]*User, 0, db.PageCapacity(opts.PageSize))
 	count, err := sess.FindAndCount(&users)
 	return users, count, err
 }

@@ -9,7 +9,6 @@ import (
 	"fmt"
 
 	admin_model "github.com/wekan/caddy-gitea-plugin/gitea/models/admin"
-	repo_model "github.com/wekan/caddy-gitea-plugin/gitea/models/repo"
 	user_model "github.com/wekan/caddy-gitea-plugin/gitea/models/user"
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/graceful"
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/json"
@@ -114,7 +113,6 @@ func CreateMigrateTask(ctx context.Context, doer, u *user_model.User, opts base.
 		GitServiceType: opts.GitServiceType,
 		IsPrivate:      opts.Private || setting.Repository.ForcePrivate,
 		IsMirror:       opts.Mirror,
-		Status:         repo_model.RepositoryBeingMigrated,
 	}, false)
 	if err != nil {
 		task.EndTime = timeutil.TimeStampNow()

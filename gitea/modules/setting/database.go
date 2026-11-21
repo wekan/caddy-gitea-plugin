@@ -10,6 +10,9 @@ import (
 
 const DefaultSQLiteBusyTimeout = 20 * 1000
 
+// DefaultSQLiteJournalMode is the journal mode of an SQLite database that sets none.
+const DefaultSQLiteJournalMode = "WAL"
+
 var (
 	// SupportedDatabaseTypes includes all XORM supported databases type, sqlite3 maybe added by the tag-controlled drivers
 	SupportedDatabaseTypes = []string{"mysql", "postgres", "mssql"}
@@ -72,7 +75,11 @@ func loadDBSetting(rootCfg ConfigProvider) {
 	if Database.SQLiteBusyTimeout < 5000 {
 		Database.SQLiteBusyTimeout = DefaultSQLiteBusyTimeout
 	}
-	Database.SQLiteJournalMode = sec.Key("SQLITE_JOURNAL_MODE").MustString("")
+	// WAL lets readers and the one writer work at once. In SQLite's own default
+	// (DELETE) every reader blocks the writer, so a long import - a migration of
+	// tens of thousands of issues - and Gitea's own background tasks wait for each
+	// other until one gives up with "database is locked" (SQLITE_BUSY).
+	Database.SQLiteJournalMode = sec.Key("SQLITE_JOURNAL_MODE").MustString(DefaultSQLiteJournalMode)
 
 	Database.MaxIdleConns = sec.Key("MAX_IDLE_CONNS").MustInt(2)
 	if Database.Type.IsMySQL() {

@@ -4,6 +4,9 @@
 package arch
 
 import (
+	"context"
+
+	packages_model "github.com/wekan/caddy-gitea-plugin/gitea/models/packages"
 	arch_module "github.com/wekan/caddy-gitea-plugin/gitea/modules/packages/arch"
 	packages_service "github.com/wekan/caddy-gitea-plugin/gitea/services/packages"
 )
@@ -16,6 +19,15 @@ type Specialization struct {
 }
 
 var _ packages_service.Specialization = (*Specialization)(nil)
+
+func (s Specialization) OnAfterRemovePackage(ctx context.Context, pkg *packages_model.Package) error {
+	release, err := AcquireRegistryLock(ctx, pkg.OwnerID)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return BuildAllRepositoryFiles(ctx, pkg.OwnerID)
+}
 
 func (s Specialization) PublicPropertyNames() []string {
 	return []string{arch_module.PropertyRepository, arch_module.PropertyArchitecture}

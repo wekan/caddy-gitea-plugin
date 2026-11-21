@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	audit_model "github.com/wekan/caddy-gitea-plugin/gitea/models/audit"
 	"github.com/wekan/caddy-gitea-plugin/gitea/models/db"
 	repo_model "github.com/wekan/caddy-gitea-plugin/gitea/models/repo"
 	"github.com/wekan/caddy-gitea-plugin/gitea/models/unit"
@@ -19,6 +20,7 @@ import (
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/util"
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/web"
 	"github.com/wekan/caddy-gitea-plugin/gitea/routers/api/v1/utils"
+	"github.com/wekan/caddy-gitea-plugin/gitea/services/audit"
 	"github.com/wekan/caddy-gitea-plugin/gitea/services/context"
 	"github.com/wekan/caddy-gitea-plugin/gitea/services/convert"
 	"github.com/wekan/caddy-gitea-plugin/gitea/services/migrations"
@@ -369,6 +371,7 @@ func CreatePushMirror(ctx *context.APIContext, mirrorOption *api.CreatePushMirro
 		ctx.APIErrorInternal(err)
 		return
 	}
+	audit.Record(ctx, audit_model.RepositoryMirrorPushAdd, repo, "mirror_id", pushMirror.ID, "remote_address", pushMirror.RemoteAddress)
 	m, err := convert.ToPushMirror(ctx, pushMirror)
 	if err != nil {
 		ctx.APIErrorInternal(err)

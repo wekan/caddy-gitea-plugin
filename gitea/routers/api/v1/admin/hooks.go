@@ -14,6 +14,7 @@ import (
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/util"
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/web"
 	"github.com/wekan/caddy-gitea-plugin/gitea/routers/api/v1/utils"
+	"github.com/wekan/caddy-gitea-plugin/gitea/services/audit"
 	"github.com/wekan/caddy-gitea-plugin/gitea/services/context"
 	webhook_service "github.com/wekan/caddy-gitea-plugin/gitea/services/webhook"
 )
@@ -191,8 +192,12 @@ func DeleteHook(ctx *context.APIContext) {
 	//   "204":
 	//     "$ref": "#/responses/empty"
 
-	hookID := ctx.PathParamInt64("id")
-	if err := webhook.DeleteDefaultSystemWebhook(ctx, hookID); err != nil {
+	hook, err := webhook.GetSystemOrDefaultWebhook(ctx, ctx.PathParamInt64("id"))
+	if err != nil {
+		ctx.APIErrorAuto(err)
+		return
+	}
+	if err := webhook.DeleteDefaultSystemWebhook(ctx, hook.ID); err != nil {
 		if errors.Is(err, util.ErrNotExist) {
 			ctx.APIErrorNotFound()
 		} else {
@@ -200,5 +205,6 @@ func DeleteHook(ctx *context.APIContext) {
 		}
 		return
 	}
+	audit.RecordScoped(ctx, nil, nil, audit.WebhookRemove, "webhook", hook.URL)
 	ctx.Status(http.StatusNoContent)
 }

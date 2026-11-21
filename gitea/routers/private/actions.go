@@ -12,6 +12,7 @@ import (
 	user_model "github.com/wekan/caddy-gitea-plugin/gitea/models/user"
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/json"
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/private"
+	"github.com/wekan/caddy-gitea-plugin/gitea/services/audit"
 	"github.com/wekan/caddy-gitea-plugin/gitea/services/context"
 )
 
@@ -37,6 +38,7 @@ func GenerateActionsRunnerToken(ctx *context.PrivateContext) {
 		ctx.PrivateInternalErrorf("GetOrCreateActiveRunnerToken failed: %v", err)
 		return
 	}
+	audit.RecordScopedByID(audit.WithCLIDoer(ctx), owner, repo, audit.RunnerToken)
 
 	ctx.PlainText(http.StatusOK, token.Token)
 }

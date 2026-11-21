@@ -52,8 +52,8 @@ func isSafeRequestID(id string) bool {
 func parseRequestIDFromRequestHeader(req *http.Request) string {
 	requestID := "-"
 	for _, key := range setting.Log.RequestIDHeaders {
-		if req.Header.Get(key) != "" {
-			requestID = req.Header.Get(key)
+		if v := redactCredentialHeader(key, req.Header.Get(key)); v != "" {
+			requestID = v
 			break
 		}
 	}
@@ -72,6 +72,18 @@ var (
 	redactedQueryKeys = []string{"token", "access_token", "private_token", "password"}
 	redactedHeaders   = []string{"Authorization", "Cookie", "X-Gitea-Otp", "Proxy-Authorization"}
 )
+
+// redactCredentialHeader is value, the request's header key, unless key is one of
+// redactedHeaders: a REQUEST_ID_HEADERS that names Authorization or Cookie must not
+// put the credential into the access log, so such a header counts as absent.
+func redactCredentialHeader(key, value string) string {
+	for _, k := range redactedHeaders {
+		if strings.EqualFold(k, key) {
+			return ""
+		}
+	}
+	return value
+}
 
 // redactedRequest is req as the access log may show it: a shallow copy whose URL
 // and headers have the credentials replaced. req itself is not changed.

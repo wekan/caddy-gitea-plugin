@@ -1,0 +1,2 @@
+import{t as e}from"./swagger.C4SRdKF5.js";var t=t=>{try{return e(t.container,{specText:t.contentString()}),!0}catch(e){return console.error(e),!1}};export{t as frontendRender};
+//# sourceMappingURL=frontend-openapi-swagger.BLC4ZSK7.js.map

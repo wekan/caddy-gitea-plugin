@@ -136,35 +136,26 @@ func DeleteActionRunJobSummary(ctx context.Context, repoID, runID, runAttemptID,
 
 func upsertActionRunJobSummary(ctx context.Context, summary *ActionRunJobSummary) error {
 	engine := db.GetEngine(ctx)
-	columns := "`repo_id`, `run_id`, `run_attempt_id`, `job_id`, `step_index`, `content`, `content_type`, `content_size`, `created`, `updated`"
-	values := []any{
-		summary.RepoID,
-		summary.RunID,
-		summary.RunAttemptID,
-		summary.JobID,
-		summary.StepIndex,
-		summary.Content,
-		summary.ContentType,
-		summary.ContentSize,
-		summary.Created,
-		summary.Updated,
+	// The statement is a constant and every value is passed as its own argument, as the
+	// MSSQL branch below does: a slice with the SQL first and the values after it put the
+	// runner's content in the same slice as the statement.
+	const columns = "`repo_id`, `run_id`, `run_attempt_id`, `job_id`, `step_index`, `content`, `content_type`, `content_size`, `created`, `updated`"
+	upsert := func(query string) error {
+		_, err := engine.Exec(query,
+			summary.RepoID, summary.RunID, summary.RunAttemptID, summary.JobID, summary.StepIndex,
+			summary.Content, summary.ContentType, summary.ContentSize, summary.Created, summary.Updated)
+		return err
 	}
 
 	if setting.Database.Type.IsPostgreSQL() || setting.Database.Type.IsSQLite3() {
-		args := append([]any{"INSERT INTO `action_run_job_summary` (" + columns + ") VALUES (?,?,?,?,?,?,?,?,?,?) " +
+		return upsert("INSERT INTO `action_run_job_summary` (" + columns + ") VALUES (?,?,?,?,?,?,?,?,?,?) " +
 			"ON CONFLICT (`repo_id`, `run_id`, `run_attempt_id`, `job_id`, `step_index`) DO UPDATE SET " +
-			"`content` = excluded.`content`, `content_type` = excluded.`content_type`, `content_size` = excluded.`content_size`, `updated` = excluded.`updated`"}, values...)
-		_, err := engine.Exec(args...)
-		return err
+			"`content` = excluded.`content`, `content_type` = excluded.`content_type`, `content_size` = excluded.`content_size`, `updated` = excluded.`updated`")
 	}
 
 	if setting.Database.Type.IsMySQL() {
-		args := append([]any{
-			"INSERT INTO `action_run_job_summary` (" + columns + ") VALUES (?,?,?,?,?,?,?,?,?,?) " +
-				"ON DUPLICATE KEY UPDATE `content` = VALUES(`content`), `content_type` = VALUES(`content_type`), `content_size` = VALUES(`content_size`), `updated` = VALUES(`updated`)",
-		}, values...)
-		_, err := engine.Exec(args...)
-		return err
+		return upsert("INSERT INTO `action_run_job_summary` (" + columns + ") VALUES (?,?,?,?,?,?,?,?,?,?) " +
+			"ON DUPLICATE KEY UPDATE `content` = VALUES(`content`), `content_type` = VALUES(`content_type`), `content_size` = VALUES(`content_size`), `updated` = VALUES(`updated`)")
 	}
 
 	if setting.Database.Type.IsMSSQL() {

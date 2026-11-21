@@ -5,8 +5,11 @@
 package admin
 
 import (
+	"maps"
 	"net/http"
+	"slices"
 
+	audit_model "github.com/wekan/caddy-gitea-plugin/gitea/models/audit"
 	system_model "github.com/wekan/caddy-gitea-plugin/gitea/models/system"
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/cache"
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/git"
@@ -16,6 +19,7 @@ import (
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/setting/config"
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/templates"
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/util"
+	"github.com/wekan/caddy-gitea-plugin/gitea/services/audit"
 	"github.com/wekan/caddy-gitea-plugin/gitea/services/context"
 	"github.com/wekan/caddy-gitea-plugin/gitea/services/mailer"
 )
@@ -152,9 +156,19 @@ loop:
 	if ctx.Written() {
 		return
 	}
-	if err := system_model.SetSettings(ctx, configSettings); err != nil {
-		ctx.ServerError("SetSettings", err)
+	_, oldSettings, err := system_model.GetAllSettings(ctx)
+	if err != nil {
+		ctx.ServerErrorAuto(err)
 		return
+	}
+	if err := system_model.SetSettings(ctx, configSettings); err != nil {
+		ctx.ServerErrorAuto(err)
+		return
+	}
+	for _, key := range slices.Sorted(maps.Keys(configSettings)) {
+		if configSettings[key] != oldSettings[key] {
+			audit.Record(ctx, audit_model.SystemConfigUpdate, nil, "key", key)
+		}
 	}
 	config.GetDynGetter().InvalidateCache()
 	ctx.JSONOK()

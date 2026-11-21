@@ -53,9 +53,11 @@ func MailPreviewRender(ctx *context.Context) {
 	// emulate mail clients, which resolve "cid:" URIs to the mail's inline attachments
 	body = strings.ReplaceAll(body, `src="cid:`, `src="`+setting.AppSubURL+`/devtest/mail-preview-embed/`)
 	// a page can force "color-scheme" on an embedded document but never "prefers-color-scheme"
+	// the page gets one of two constant styles, never the request's own text
 	if scheme := ctx.FormString("scheme"); scheme == "light" || scheme == "dark" {
-		body = mailDarkSchemeQuery().ReplaceAllString(body, util.Iif(scheme == "dark", "@media all", "@media not all"))
-		body = strings.Replace(body, "</head>", "<style>:root {color-scheme: "+scheme+"}</style></head>", 1)
+		dark := scheme == "dark"
+		body = mailDarkSchemeQuery().ReplaceAllString(body, util.Iif(dark, "@media all", "@media not all"))
+		body = strings.Replace(body, "</head>", util.Iif(dark, "<style>:root {color-scheme: dark}</style></head>", "<style>:root {color-scheme: light}</style></head>"), 1)
 	}
 	// fragment templates like "mail/base/head" would be sniffed as text/plain otherwise
 	ctx.Resp.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -65,7 +67,7 @@ func MailPreviewRender(ctx *context.Context) {
 func MailPreviewEmbed(ctx *context.Context) {
 	content, err := mailer.LoadMailIcon(ctx.PathParam("*"))
 	if err != nil {
-		ctx.NotFound(err)
+		ctx.ServerErrorAuto(err)
 		return
 	}
 	ctx.Resp.Header().Set("Content-Type", "image/png")

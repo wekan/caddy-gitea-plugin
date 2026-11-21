@@ -17,6 +17,7 @@ import (
 	unit_model "github.com/wekan/caddy-gitea-plugin/gitea/models/unit"
 	user_model "github.com/wekan/caddy-gitea-plugin/gitea/models/user"
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/log"
+	"github.com/wekan/caddy-gitea-plugin/gitea/modules/setting"
 	api "github.com/wekan/caddy-gitea-plugin/gitea/modules/structs"
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/util"
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/web"
@@ -210,13 +211,17 @@ func CreateTeam(ctx *context.APIContext) {
 	//   default:
 	//     "$ref": "#/responses/error"
 	form := web.GetForm[*api.CreateTeamOption](ctx)
+	visibility := setting.Service.DefaultTeamVisibilityMode
+	if form.Visibility != "" {
+		visibility = organization.NormalizeTeamVisibility(form.Visibility)
+	}
 	team := &organization.Team{
 		OrgID:                   ctx.Org.Organization.ID,
 		Name:                    form.Name,
 		Description:             form.Description,
 		IncludesAllRepositories: form.IncludesAllRepositories,
 		CanCreateOrgRepo:        form.CanCreateOrgRepo,
-		Visibility:              organization.NormalizeTeamVisibility(form.Visibility),
+		Visibility:              visibility,
 	}
 	_, err := assignTeamPermissionUnits(team, string(form.Permission), form.Units, form.UnitsMap)
 	if err != nil {
@@ -273,7 +278,11 @@ func EditTeam(ctx *context.APIContext) {
 		team.CanCreateOrgRepo = team.IsOwnerTeam() || *form.CanCreateOrgRepo
 	}
 
-	if len(form.Name) > 0 {
+	if len(form.Name) > 0 && form.Name != team.Name {
+		if team.IsOwnerTeam() {
+			ctx.APIError(http.StatusUnprocessableEntity, "the owner team cannot be renamed")
+			return
+		}
 		team.Name = form.Name
 	}
 

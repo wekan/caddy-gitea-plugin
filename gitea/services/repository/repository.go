@@ -12,13 +12,13 @@ import (
 	activities_model "github.com/wekan/caddy-gitea-plugin/gitea/models/activities"
 	audit_model "github.com/wekan/caddy-gitea-plugin/gitea/models/audit"
 	"github.com/wekan/caddy-gitea-plugin/gitea/models/db"
-	git_model "github.com/wekan/caddy-gitea-plugin/gitea/models/git"
 	issues_model "github.com/wekan/caddy-gitea-plugin/gitea/models/issues"
 	"github.com/wekan/caddy-gitea-plugin/gitea/models/organization"
 	access_model "github.com/wekan/caddy-gitea-plugin/gitea/models/perm/access"
 	repo_model "github.com/wekan/caddy-gitea-plugin/gitea/models/repo"
 	"github.com/wekan/caddy-gitea-plugin/gitea/models/unit"
 	user_model "github.com/wekan/caddy-gitea-plugin/gitea/models/user"
+	"github.com/wekan/caddy-gitea-plugin/gitea/modules/commitstatus"
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/git"
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/git/gitrepo"
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/graceful"
@@ -33,11 +33,17 @@ import (
 	pull_service "github.com/wekan/caddy-gitea-plugin/gitea/services/pull"
 )
 
+// WebSearchCommitStatus is the latest commit status of a repository returned by web search
+type WebSearchCommitStatus struct {
+	State     commitstatus.CommitStatusState `json:"state"`
+	TargetURL string                         `json:"target_url"`
+}
+
 // WebSearchRepository represents a repository returned by web search
 type WebSearchRepository struct {
-	Repository               *structs.Repository     `json:"repository"`
-	LatestCommitStatus       *git_model.CommitStatus `json:"latest_commit_status"`
-	LocaleLatestCommitStatus string                  `json:"locale_latest_commit_status"`
+	Repository               *structs.Repository    `json:"repository"`
+	LatestCommitStatus       *WebSearchCommitStatus `json:"latest_commit_status"`
+	LocaleLatestCommitStatus string                 `json:"locale_latest_commit_status"`
 }
 
 // WebSearchResults results of a successful web search

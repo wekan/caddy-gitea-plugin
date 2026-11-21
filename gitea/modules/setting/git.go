@@ -55,7 +55,10 @@ var Git = struct {
 		Mirror  int
 		GC      int `ini:"GC"`
 	}{
-		Migrate: 600,
+		// A migration clones the whole history first: ten minutes is not enough for a
+		// large one (LibreOffice's translations), and a clone that times out has to
+		// start over. A day.
+		Migrate: 24 * 60 * 60,
 		Mirror:  300,
 		GC:      60,
 	},

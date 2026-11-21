@@ -45,10 +45,16 @@ makes it:
 `gitea/` is generated: change Gitea upstream, in gitea-patches or in `dist/gitea/`,
 and sync again.
 
+The security hardening code scanning found worth making in Gitea is Gitea's own
+code, so it is a gitea-patches patch,
+[`security-hardening`](https://github.com/wekan/gitea-patches/blob/main/dist/all/security-hardening.md),
+which every Gitea that repository builds gets. The rest of the alerts and why
+they stay are in the [Hall of Fame](https://github.com/wekan/caddy-gitea-plugin/wiki/Hall-of-Fame).
+The patch below is only what Gitea needs inside a host program:
+
 | Patch | Why |
 |-------|-----|
 | [`embedded-in-a-host`](dist/gitea/embedded-in-a-host.md) | Inside Caddy, Gitea must not handle Caddy's signals - a SIGHUP would make it "restart" by re-executing Caddy's binary - nor shut down the HTTP server after its install page, which is Caddy's |
-| [`security-hardening`](dist/gitea/security-hardening.md) | What code scanning found worth changing: the container tag list's allocation from `?n=`, two `int64` to `int` conversions that wrap on 32-bit platforms, and credentials in the access log. The rest of the alerts and why they stay are in the [Hall of Fame](https://github.com/wekan/caddy-gitea-plugin/wiki/Hall-of-Fame) |
 
 ## Modules
 

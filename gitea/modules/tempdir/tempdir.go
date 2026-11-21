@@ -4,6 +4,7 @@
 package tempdir
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"time"
@@ -34,11 +35,20 @@ func (td *TempDir) MkdirAllSub(dir string) (string, error) {
 	return full, nil
 }
 
+// errNotLocal is returned for elems that would name a path outside the temp directory.
+var errNotLocal = errors.New("temp path is not inside the temp directory")
+
 func (td *TempDir) prepareDirWithPattern(elems ...string) (dir, pattern string, err error) {
+	// elems can carry a name from a request - "repos-" + a repository name - so they
+	// must stay inside base/sub: ".." or an absolute path is refused.
+	local := filepath.Join(elems...)
+	if !filepath.IsLocal(local) {
+		return "", "", errNotLocal
+	}
 	if _, err = os.Stat(td.base); err != nil {
 		return "", "", err
 	}
-	dir, pattern = filepath.Split(filepath.Join(append([]string{td.base, td.sub}, elems...)...))
+	dir, pattern = filepath.Split(filepath.Join(td.base, td.sub, local))
 	if err = os.MkdirAll(dir, os.ModePerm); err != nil {
 		return "", "", err
 	}

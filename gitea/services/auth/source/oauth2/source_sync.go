@@ -11,6 +11,9 @@ import (
 	"github.com/wekan/caddy-gitea-plugin/gitea/models/db"
 	user_model "github.com/wekan/caddy-gitea-plugin/gitea/models/user"
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/log"
+	"github.com/wekan/caddy-gitea-plugin/gitea/modules/optional"
+	"github.com/wekan/caddy-gitea-plugin/gitea/services/audit"
+	user_service "github.com/wekan/caddy-gitea-plugin/gitea/services/user"
 
 	"github.com/markbates/goth"
 	"golang.org/x/oauth2"
@@ -73,8 +76,8 @@ func (source *Source) refresh(ctx context.Context, provider goth.Provider, u *us
 		return db.WithTx(ctx, func(ctx context.Context) error {
 			if hasUser {
 				log.Info("SyncExternalUsers[%s] disabling user %d", source.AuthSource.Name, user.ID)
-				user.IsActive = false
-				if err := user_model.UpdateUserCols(ctx, user, "is_active"); err != nil {
+				opts := &user_service.UpdateOptions{IsActive: optional.Some(false)}
+				if err := user_service.UpdateUser(audit.WithDoer(ctx, user_model.NewAuthSourceUser()), user, opts); err != nil {
 					return err
 				}
 			}

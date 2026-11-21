@@ -230,7 +230,7 @@ func GetFeeds(ctx context.Context, opts GetFeedsOptions) (ActionList, int64, err
 		}
 	}
 
-	actions := make([]*Action, 0, opts.PageSize)
+	actions := make([]*Action, 0, db.PageCapacity(opts.PageSize))
 	var count int64
 	opts.SetDefaultValues()
 
@@ -251,7 +251,7 @@ func GetFeeds(ctx context.Context, opts GetFeedsOptions) (ActionList, int64, err
 		sess := db.GetEngine(ctx).Where(cond).Select("`action`.id")
 		db.SetSessionPagination(sess, &opts)
 
-		actionIDs := make([]int64, 0, opts.PageSize)
+		actionIDs := make([]int64, 0, db.PageCapacity(opts.PageSize))
 		if err := sess.Table("action").Desc("`action`.created_unix").Find(&actionIDs); err != nil {
 			return nil, 0, fmt.Errorf("Find(actionsIDs): %w", err)
 		}

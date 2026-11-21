@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"slices"
 
+	audit_model "github.com/wekan/caddy-gitea-plugin/gitea/models/audit"
 	"github.com/wekan/caddy-gitea-plugin/gitea/models/db"
 	git_model "github.com/wekan/caddy-gitea-plugin/gitea/models/git"
 	"github.com/wekan/caddy-gitea-plugin/gitea/models/organization"
@@ -21,6 +22,7 @@ import (
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/util"
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/web"
 	"github.com/wekan/caddy-gitea-plugin/gitea/routers/api/v1/utils"
+	"github.com/wekan/caddy-gitea-plugin/gitea/services/audit"
 	"github.com/wekan/caddy-gitea-plugin/gitea/services/context"
 	"github.com/wekan/caddy-gitea-plugin/gitea/services/convert"
 	pull_service "github.com/wekan/caddy-gitea-plugin/gitea/services/pull"
@@ -311,11 +313,6 @@ func ListBranches(ctx *context.APIContext) {
 	keyword := ctx.FormString("q")
 
 	if !ctx.Repo.Repository.IsEmpty {
-		if ctx.Repo.GitRepo == nil {
-			ctx.APIErrorInternal(nil)
-			return
-		}
-
 		branchOpts := git_model.FindBranchOptions{
 			ListOptions:     listOptions,
 			RepoID:          ctx.Repo.Repository.ID,
@@ -810,6 +807,7 @@ func CreateBranchProtection(ctx *context.APIContext) {
 		ctx.APIErrorAuto(err)
 		return
 	}
+	audit.Record(ctx, audit_model.RepositoryBranchProtectionAdd, ctx.Repo.Repository, "rule", protectBranch.RuleName)
 
 	// Reload from db to get all whitelists
 	bp, err := git_model.GetProtectedBranchRuleByName(ctx, ctx.Repo.Repository.ID, ruleName)
@@ -1100,6 +1098,7 @@ func EditBranchProtection(ctx *context.APIContext) {
 		ctx.APIErrorAuto(err)
 		return
 	}
+	audit.Record(ctx, audit_model.RepositoryBranchProtectionUpdate, ctx.Repo.Repository, "rule", protectBranch.RuleName)
 
 	isPlainRule := !git_model.IsRuleNameSpecial(bpName)
 	var isBranchExist bool
@@ -1200,6 +1199,7 @@ func DeleteBranchProtection(ctx *context.APIContext) {
 		ctx.APIErrorInternal(err)
 		return
 	}
+	audit.Record(ctx, audit_model.RepositoryBranchProtectionRemove, ctx.Repo.Repository, "rule", bp.RuleName)
 
 	ctx.Status(http.StatusNoContent)
 }

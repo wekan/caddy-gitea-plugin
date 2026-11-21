@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	audit_model "github.com/wekan/caddy-gitea-plugin/gitea/models/audit"
 	repo_model "github.com/wekan/caddy-gitea-plugin/gitea/models/repo"
 	system_model "github.com/wekan/caddy-gitea-plugin/gitea/models/system"
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/git"
@@ -22,6 +23,7 @@ import (
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/setting"
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/timeutil"
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/util"
+	"github.com/wekan/caddy-gitea-plugin/gitea/services/audit"
 	"github.com/wekan/caddy-gitea-plugin/gitea/services/migrations"
 	notify_service "github.com/wekan/caddy-gitea-plugin/gitea/services/notify"
 	repo_service "github.com/wekan/caddy-gitea-plugin/gitea/services/repository"
@@ -63,8 +65,15 @@ func UpdateAddress(ctx context.Context, m *repo_model.Mirror, addr string) error
 
 	// erase authentication before storing in database
 	u.User = nil
+	oldURL := m.Repo.OriginalURL
 	m.Repo.OriginalURL = u.String()
-	return repo_model.UpdateRepositoryColsNoAutoTime(ctx, m.Repo, "original_url")
+	if err := repo_model.UpdateRepositoryColsNoAutoTime(ctx, m.Repo, "original_url"); err != nil {
+		return err
+	}
+	if m.Repo.OriginalURL != oldURL {
+		audit.Record(ctx, audit_model.RepositoryMirrorPullUpdate, m.Repo, "remote_address", m.Repo.OriginalURL)
+	}
+	return nil
 }
 
 func pruneBrokenReferences(ctx context.Context, m *repo_model.Mirror, repoLogName string, gitRepo git.RepositoryFacade, timeout time.Duration) error {

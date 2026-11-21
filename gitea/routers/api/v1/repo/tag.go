@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 
+	audit_model "github.com/wekan/caddy-gitea-plugin/gitea/models/audit"
 	git_model "github.com/wekan/caddy-gitea-plugin/gitea/models/git"
 	"github.com/wekan/caddy-gitea-plugin/gitea/models/organization"
 	repo_model "github.com/wekan/caddy-gitea-plugin/gitea/models/repo"
@@ -17,6 +18,7 @@ import (
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/util"
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/web"
 	"github.com/wekan/caddy-gitea-plugin/gitea/routers/api/v1/utils"
+	"github.com/wekan/caddy-gitea-plugin/gitea/services/audit"
 	"github.com/wekan/caddy-gitea-plugin/gitea/services/context"
 	"github.com/wekan/caddy-gitea-plugin/gitea/services/convert"
 	release_service "github.com/wekan/caddy-gitea-plugin/gitea/services/release"
@@ -444,6 +446,7 @@ func CreateTagProtection(ctx *context.APIContext) {
 		ctx.APIErrorInternal(err)
 		return
 	}
+	audit.Record(ctx, audit_model.RepositoryTagProtectionAdd, repo, "pattern", protectTag.NamePattern)
 
 	pt, err = git_model.GetProtectedTagByID(ctx, protectTag.ID)
 	if err != nil {
@@ -547,6 +550,7 @@ func EditTagProtection(ctx *context.APIContext) {
 		ctx.APIErrorInternal(err)
 		return
 	}
+	audit.Record(ctx, audit_model.RepositoryTagProtectionUpdate, repo, "pattern", pt.NamePattern)
 
 	pt, err = git_model.GetProtectedTagByID(ctx, id)
 	if err != nil {
@@ -609,6 +613,7 @@ func DeleteTagProtection(ctx *context.APIContext) {
 		ctx.APIErrorInternal(err)
 		return
 	}
+	audit.Record(ctx, audit_model.RepositoryTagProtectionRemove, repo, "pattern", pt.NamePattern)
 
 	ctx.Status(http.StatusNoContent)
 }

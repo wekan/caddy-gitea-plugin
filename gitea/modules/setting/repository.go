@@ -59,8 +59,6 @@ var (
 		DisableStars                            bool `ini:"DISABLE_STARS"`
 		DefaultBranch                           string
 		DefaultObjectFormat                     string
-		AllowAdoptionOfUnadoptedRepositories    bool
-		AllowDeleteOfUnadoptedRepositories      bool
 		DisableDownloadSourceArchives           bool
 		AllowForkWithoutMaximumLimit            bool
 		AllowForkIntoSameOwner                  bool
@@ -232,7 +230,7 @@ var (
 		}{
 			AllowedTypes:     "",
 			DefaultPagingNum: 10,
-			FileMaxSize:      2048,
+			FileMaxSize:      -1, // no limit: a release file is as large as the release needs
 			MaxFiles:         5,
 		},
 

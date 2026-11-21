@@ -148,10 +148,16 @@ func (p *Renderer) prepareExternalCommand(vars map[string]string) (string, []str
 		replacements = append(replacements, "%"+k+"%", v) // for legacy Windows-style support
 	}
 	r := strings.NewReplacer(replacements...)
-	for i := range fields {
-		fields[i] = r.Replace(fields[i])
+	// The variables go into the arguments only: the program is what the site admin
+	// configured. GITEA_PREFIX_SRC and GITEA_PREFIX_RAW are derived from the request
+	// (its Host and X-Forwarded-Proto), so a program named by them would be chosen by
+	// whoever sends the request.
+	prog := fields[0]
+	args := make([]string, 0, len(fields)-1)
+	for _, field := range fields[1:] {
+		args = append(args, r.Replace(field))
 	}
-	return fields[0], fields[1:], nil
+	return prog, args, nil
 }
 
 func (p *Renderer) prepare(baseLinkSrc, baseLinkRaw string) (ret struct {

@@ -8,12 +8,14 @@ import (
 	"strings"
 
 	asymkey_model "github.com/wekan/caddy-gitea-plugin/gitea/models/asymkey"
+	audit_model "github.com/wekan/caddy-gitea-plugin/gitea/models/audit"
 	"github.com/wekan/caddy-gitea-plugin/gitea/models/db"
 	user_model "github.com/wekan/caddy-gitea-plugin/gitea/models/user"
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/setting"
 	api "github.com/wekan/caddy-gitea-plugin/gitea/modules/structs"
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/web"
 	"github.com/wekan/caddy-gitea-plugin/gitea/routers/api/v1/utils"
+	"github.com/wekan/caddy-gitea-plugin/gitea/services/audit"
 	"github.com/wekan/caddy-gitea-plugin/gitea/services/context"
 	"github.com/wekan/caddy-gitea-plugin/gitea/services/convert"
 )
@@ -151,6 +153,10 @@ func CreateUserGPGKey(ctx *context.APIContext, form api.CreateGPGKeyOption, uid 
 		HandleAddGPGKeyError(ctx, err, token)
 		return
 	}
+	owner := audit.ScopeFromUserID(ctx, uid)
+	for _, key := range keys {
+		audit.Record(ctx, audit_model.UserKeyGPGAdd, owner, "gpg_key_id", key.KeyID)
+	}
 	ctx.JSON(http.StatusCreated, convert.ToGPGKey(keys[0]))
 }
 
@@ -275,9 +281,17 @@ func DeleteGPGKey(ctx *context.APIContext) {
 		return
 	}
 
+	key, err := asymkey_model.GetGPGKeyForUserByID(ctx, ctx.Doer.ID, ctx.PathParamInt64("id"))
+	if err != nil && !asymkey_model.IsErrGPGKeyNotExist(err) {
+		ctx.APIErrorInternal(err)
+		return
+	}
 	if err := asymkey_model.DeleteGPGKey(ctx, ctx.Doer, ctx.PathParamInt64("id")); err != nil {
 		ctx.APIErrorInternal(err)
 		return
+	}
+	if key != nil {
+		audit.Record(ctx, audit_model.UserKeyGPGRemove, ctx.Doer, "gpg_key_id", key.KeyID)
 	}
 
 	ctx.Status(http.StatusNoContent)

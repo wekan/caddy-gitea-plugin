@@ -9,6 +9,7 @@ import (
 	"net/http"
 
 	asymkey_model "github.com/wekan/caddy-gitea-plugin/gitea/models/asymkey"
+	audit_model "github.com/wekan/caddy-gitea-plugin/gitea/models/audit"
 	"github.com/wekan/caddy-gitea-plugin/gitea/models/db"
 	"github.com/wekan/caddy-gitea-plugin/gitea/models/perm"
 	user_model "github.com/wekan/caddy-gitea-plugin/gitea/models/user"
@@ -18,6 +19,7 @@ import (
 	"github.com/wekan/caddy-gitea-plugin/gitea/routers/api/v1/repo"
 	"github.com/wekan/caddy-gitea-plugin/gitea/routers/api/v1/utils"
 	asymkey_service "github.com/wekan/caddy-gitea-plugin/gitea/services/asymkey"
+	"github.com/wekan/caddy-gitea-plugin/gitea/services/audit"
 	"github.com/wekan/caddy-gitea-plugin/gitea/services/context"
 	"github.com/wekan/caddy-gitea-plugin/gitea/services/convert"
 )
@@ -217,6 +219,7 @@ func CreateUserPublicKey(ctx *context.APIContext, form api.CreateKeyOption, uid 
 		repo.HandleAddKeyError(ctx, err)
 		return
 	}
+	audit.Record(ctx, audit_model.UserKeySSHAdd, audit.ScopeFromUserID(ctx, uid), "fingerprint", key.Fingerprint)
 	apiLink := composePublicKeysAPILink()
 	apiKey := convert.ToPublicKey(apiLink, key)
 	if ctx.Doer.IsAdmin || ctx.Doer.ID == key.OwnerID {

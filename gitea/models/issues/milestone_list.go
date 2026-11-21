@@ -173,6 +173,17 @@ func (m MilestonesStats) Total() int64 {
 	return m.OpenCount + m.ClosedCount
 }
 
+// milestoneNameLike matches the milestone name case-insensitively against keyword, as
+// builder.Like did - wrapped in % unless it starts or ends with one - with the keyword
+// a bound value of a constant statement.
+func milestoneNameLike(keyword string) builder.Cond {
+	pattern := strings.ToUpper(keyword)
+	if !strings.HasPrefix(pattern, "%") && !strings.HasSuffix(pattern, "%") {
+		pattern = "%" + pattern + "%"
+	}
+	return builder.Expr("UPPER(name) LIKE ?", pattern)
+}
+
 // GetMilestonesStatsByRepoCondAndKw returns milestone statistic information for dashboard by given repo conditions and name keyword.
 func GetMilestonesStatsByRepoCondAndKw(ctx context.Context, repoCond builder.Cond, keyword string) (*MilestonesStats, error) {
 	var err error
@@ -180,7 +191,7 @@ func GetMilestonesStatsByRepoCondAndKw(ctx context.Context, repoCond builder.Con
 
 	sess := db.GetEngine(ctx).Where("is_closed = ?", false)
 	if len(keyword) > 0 {
-		sess = sess.And(builder.Like{"UPPER(name)", strings.ToUpper(keyword)})
+		sess = sess.And(milestoneNameLike(keyword))
 	}
 	if repoCond.IsValid() {
 		sess.And(builder.In("repo_id", builder.Select("id").From("repository").Where(repoCond)))
@@ -192,7 +203,7 @@ func GetMilestonesStatsByRepoCondAndKw(ctx context.Context, repoCond builder.Con
 
 	sess = db.GetEngine(ctx).Where("is_closed = ?", true)
 	if len(keyword) > 0 {
-		sess = sess.And(builder.Like{"UPPER(name)", strings.ToUpper(keyword)})
+		sess = sess.And(milestoneNameLike(keyword))
 	}
 	if repoCond.IsValid() {
 		sess.And(builder.In("repo_id", builder.Select("id").From("repository").Where(repoCond)))

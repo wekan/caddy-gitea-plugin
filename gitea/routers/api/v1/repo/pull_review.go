@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 
+	audit_model "github.com/wekan/caddy-gitea-plugin/gitea/models/audit"
 	issues_model "github.com/wekan/caddy-gitea-plugin/gitea/models/issues"
 	"github.com/wekan/caddy-gitea-plugin/gitea/models/organization"
 	access_model "github.com/wekan/caddy-gitea-plugin/gitea/models/perm/access"
@@ -17,6 +18,7 @@ import (
 	api "github.com/wekan/caddy-gitea-plugin/gitea/modules/structs"
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/web"
 	"github.com/wekan/caddy-gitea-plugin/gitea/routers/api/v1/utils"
+	"github.com/wekan/caddy-gitea-plugin/gitea/services/audit"
 	"github.com/wekan/caddy-gitea-plugin/gitea/services/context"
 	"github.com/wekan/caddy-gitea-plugin/gitea/services/convert"
 	issue_service "github.com/wekan/caddy-gitea-plugin/gitea/services/issue"
@@ -429,7 +431,7 @@ func DeletePullReview(ctx *context.APIContext) {
 	//   default:
 	//     "$ref": "#/responses/error"
 
-	review, _, statusSet := prepareSingleReview(ctx)
+	review, pr, statusSet := prepareSingleReview(ctx)
 	if statusSet {
 		return
 	}
@@ -447,6 +449,7 @@ func DeletePullReview(ctx *context.APIContext) {
 		ctx.APIErrorInternal(fmt.Errorf("can not delete ReviewID: %d", review.ID))
 		return
 	}
+	audit.Record(ctx, audit_model.PullRequestReviewDelete, ctx.Repo.Repository, "pull_request", fmt.Sprintf("#%d", pr.Index), "review_id", review.ID)
 
 	ctx.Status(http.StatusNoContent)
 }

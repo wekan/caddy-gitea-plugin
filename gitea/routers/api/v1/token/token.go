@@ -7,11 +7,13 @@ import (
 	"errors"
 	"net/http"
 
+	audit_model "github.com/wekan/caddy-gitea-plugin/gitea/models/audit"
 	auth_model "github.com/wekan/caddy-gitea-plugin/gitea/models/auth"
 	user_model "github.com/wekan/caddy-gitea-plugin/gitea/models/user"
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/auth/httpauth"
 	api "github.com/wekan/caddy-gitea-plugin/gitea/modules/structs"
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/util"
+	"github.com/wekan/caddy-gitea-plugin/gitea/services/audit"
 	"github.com/wekan/caddy-gitea-plugin/gitea/services/context"
 )
 
@@ -72,6 +74,9 @@ func DeleteCurrentToken(ctx *context.APIContext) {
 	if err != nil && !errors.Is(err, util.ErrNotExist) {
 		ctx.APIErrorAuto(err)
 		return
+	}
+	if err == nil {
+		audit.Record(ctx, audit_model.UserAccessTokenRemove, audit.ScopeFromUserID(ctx, accessToken.UID), "token", accessToken.Name)
 	}
 	ctx.Status(http.StatusNoContent)
 }

@@ -7,6 +7,7 @@ package repo
 import (
 	"net/http"
 
+	"github.com/wekan/caddy-gitea-plugin/gitea/models/db"
 	issues_model "github.com/wekan/caddy-gitea-plugin/gitea/models/issues"
 	access_model "github.com/wekan/caddy-gitea-plugin/gitea/models/perm/access"
 	repo_model "github.com/wekan/caddy-gitea-plugin/gitea/models/repo"
@@ -70,7 +71,7 @@ func GetIssueDependencies(ctx *context.APIContext) {
 
 	canWrite := ctx.Repo.Permission.CanWriteIssuesOrPulls(issue.IsPull)
 
-	blockerIssues := make([]*issues_model.Issue, 0, min(listOptions.PageSize, setting.API.MaxResponseItems))
+	blockerIssues := make([]*issues_model.Issue, 0, db.PageCapacity(min(listOptions.PageSize, setting.API.MaxResponseItems)))
 
 	// Get the issues this issue depends on, i.e. the `<#b>`: `<issue> <- <#b>`
 	blockersInfo, total, err := issue.BlockedByDependencies(ctx, listOptions)

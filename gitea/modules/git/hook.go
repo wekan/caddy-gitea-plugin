@@ -22,9 +22,6 @@ var hookNames = []string{
 	"post-receive",
 }
 
-// ErrNotValidHook error when a git hook is not valid
-var ErrNotValidHook = errors.New("not a valid Git hook")
-
 // IsValidHookName returns true if given name is a valid Git hook.
 func IsValidHookName(name string) bool {
 	return slices.Contains(hookNames, name)
@@ -42,9 +39,13 @@ type Hook struct {
 // GetHook returns a Git hook by given name and repository.
 func GetHook(repo RepositoryFacade, name string) (*Hook, error) {
 	repoPath := gitrepo.RepoLocalPath(repo)
-	if !IsValidHookName(name) {
-		return nil, ErrNotValidHook
+	// the name is one of hookNames: the path is built from that constant, not from the
+	// name the request gave
+	i := slices.Index(hookNames, name)
+	if i < 0 {
+		return nil, util.NewNotExistErrorf("invalid hook name: %s", name)
 	}
+	name = hookNames[i]
 	h := &Hook{
 		name: name,
 		path: filepath.Join(repoPath, filepath.Join("hooks", name+".d", name)),

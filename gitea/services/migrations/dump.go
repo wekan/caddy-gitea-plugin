@@ -15,6 +15,7 @@ import (
 	"time"
 	"uuid"
 
+	audit_model "github.com/wekan/caddy-gitea-plugin/gitea/models/audit"
 	user_model "github.com/wekan/caddy-gitea-plugin/gitea/models/user"
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/git"
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/git/gitcmd"
@@ -24,6 +25,7 @@ import (
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/repository"
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/setting"
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/structs"
+	"github.com/wekan/caddy-gitea-plugin/gitea/services/audit"
 
 	"go.yaml.in/yaml/v4"
 )
@@ -727,5 +729,9 @@ func RestoreRepository(ctx context.Context, baseDir, ownerName, repoName string,
 		}
 		return err
 	}
-	return updateMigrationPosterIDByGitService(ctx, structs.GitServiceType(tp))
+	if err := updateMigrationPosterIDByGitService(ctx, structs.GitServiceType(tp)); err != nil {
+		return err
+	}
+	audit.Record(ctx, audit_model.RepositoryCreate, uploader.repo)
+	return nil
 }

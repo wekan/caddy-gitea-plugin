@@ -7,7 +7,6 @@ import (
 	"context"
 	"strings"
 
-	asymkey_model "github.com/wekan/caddy-gitea-plugin/gitea/models/asymkey"
 	audit_model "github.com/wekan/caddy-gitea-plugin/gitea/models/audit"
 	"github.com/wekan/caddy-gitea-plugin/gitea/models/auth"
 	user_model "github.com/wekan/caddy-gitea-plugin/gitea/models/user"
@@ -77,7 +76,7 @@ func (source *Source) Authenticate(ctx context.Context, user *user_model.User, u
 	}
 
 	if user != nil {
-		if isAttributeSSHPublicKeySet && asymkey_model.SynchronizePublicKeys(ctx, user, source.AuthSource, sr.SSHPublicKey, source.SSHKeysAreVerified) {
+		if isAttributeSSHPublicKeySet && asymkey_service.SynchronizePublicKeys(ctx, user, source.AuthSource, sr.SSHPublicKey, source.SSHKeysAreVerified) {
 			if err := asymkey_service.RewriteAllPublicKeys(ctx); err != nil {
 				return user, err
 			}
@@ -105,7 +104,7 @@ func (source *Source) Authenticate(ctx context.Context, user *user_model.User, u
 
 		audit.Record(ctx, audit_model.UserCreate, user)
 
-		if isAttributeSSHPublicKeySet && asymkey_model.AddPublicKeysBySource(ctx, user, source.AuthSource, sr.SSHPublicKey, source.SSHKeysAreVerified) {
+		if isAttributeSSHPublicKeySet && asymkey_service.AddPublicKeysBySource(ctx, user, source.AuthSource, sr.SSHPublicKey, source.SSHKeysAreVerified) {
 			if err := asymkey_service.RewriteAllPublicKeys(ctx); err != nil {
 				return user, err
 			}

@@ -62,15 +62,27 @@ type Pagination struct {
 	urlParams []string
 }
 
+// totalToInt converts a total count to int within math.MinInt32..math.MaxInt32,
+// a range that holds where int is 32 bits too (linux/386, arm) - a total beyond
+// it, such as a count parsed from git's output, would wrap. Each bound returns
+// from its own branch, so the conversion below is visibly bounded; -1, which
+// means "only prev/next", is kept.
+func totalToInt(total int64) int {
+	if total > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	if total < math.MinInt32 {
+		return math.MinInt32
+	}
+	return int(total)
+}
+
 // newPagination creates a new instance of the Pagination struct.
 // "total" is usually from database result "count int64", so it also uses int64
 // "pagingNum" is "page size" or "limit", "current" is "page"
 // total=-1 means only showing prev/next
 func newPagination(total int64, pagingNum, current, numPages int) *Pagination {
-	if total > math.MaxInt32 { // a bound that holds where int is 32 bits too
-		total = math.MaxInt32
-	}
-	totalInt := int(total)
+	totalInt := totalToInt(total)
 	p := &Pagination{}
 	p.Paginator = paginator.New(totalInt, pagingNum, current, numPages)
 	return p

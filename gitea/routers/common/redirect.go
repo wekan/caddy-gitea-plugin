@@ -17,11 +17,18 @@ func FetchRedirectDelegate(resp http.ResponseWriter, req *http.Request) {
 	// The typical page is "issue comment" page. The backend responds "/owner/repo/issues/1#comment-2",
 	// then frontend needs this delegate to redirect to the new location with hash correctly.
 	redirect := req.FormValue("redirect")
-	if req.Method != http.MethodPost || !httplib.IsCurrentGiteaSiteURL(req.Context(), redirect) {
+	if req.Method != http.MethodPost || !isValidRedirect(req, redirect) {
 		http.Error(resp, "Bad Request", http.StatusBadRequest)
 		return
 	}
-	// no OpenRedirect, the "redirect" is validated by "IsCurrentGiteaSiteURL" above
+	// no OpenRedirect, the "redirect" is validated by isValidRedirect above
 	resp.Header().Set("Location", redirect)
 	resp.WriteHeader(http.StatusSeeOther)
+}
+
+// isValidRedirect reports whether s is a URL of this Gitea site - the only place
+// FetchRedirectDelegate redirects to. It is its own function so the check is
+// named for what it is where the redirect is made.
+func isValidRedirect(req *http.Request, s string) bool {
+	return httplib.IsCurrentGiteaSiteURL(req.Context(), s)
 }

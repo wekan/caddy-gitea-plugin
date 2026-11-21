@@ -10,6 +10,7 @@ import (
 	"net/http"
 
 	asymkey_model "github.com/wekan/caddy-gitea-plugin/gitea/models/asymkey"
+	audit_model "github.com/wekan/caddy-gitea-plugin/gitea/models/audit"
 	"github.com/wekan/caddy-gitea-plugin/gitea/models/db"
 	deploykey_model "github.com/wekan/caddy-gitea-plugin/gitea/models/deploykey"
 	"github.com/wekan/caddy-gitea-plugin/gitea/models/perm"
@@ -20,6 +21,7 @@ import (
 	"github.com/wekan/caddy-gitea-plugin/gitea/modules/web"
 	"github.com/wekan/caddy-gitea-plugin/gitea/routers/api/v1/utils"
 	asymkey_service "github.com/wekan/caddy-gitea-plugin/gitea/services/asymkey"
+	"github.com/wekan/caddy-gitea-plugin/gitea/services/audit"
 	"github.com/wekan/caddy-gitea-plugin/gitea/services/context"
 	"github.com/wekan/caddy-gitea-plugin/gitea/services/convert"
 )
@@ -217,6 +219,7 @@ func CreateDeployKey(ctx *context.APIContext) {
 		HandleAddKeyError(ctx, err)
 		return
 	}
+	audit.Record(ctx, audit_model.RepositoryDeployKeyAdd, ctx.Repo.Repository, "deploy_key", key.Name)
 	ctx.JSON(http.StatusCreated, convert.ToDeployKey(ctx, ctx.Repo.Repository, key))
 }
 
@@ -257,6 +260,7 @@ func CreateDeployToken(ctx *context.APIContext) {
 		HandleAddKeyError(ctx, err)
 		return
 	}
+	audit.Record(ctx, audit_model.RepositoryDeployKeyAdd, ctx.Repo.Repository, "deploy_key", key.Name)
 
 	ctx.JSON(http.StatusCreated, convert.ToDeployKey(ctx, ctx.Repo.Repository, key))
 }
